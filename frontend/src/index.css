@@ -1,0 +1,8 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Smooth drag-and-drop cursor */
+[data-dragging='true'] {
+  cursor: grabbing;
+}
