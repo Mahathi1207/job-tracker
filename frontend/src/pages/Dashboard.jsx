@@ -1,4 +1,6 @@
 import { useState, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
+import { differenceInDays, parseISO, format } from 'date-fns'
 import api from '../api/axios'
 import KanbanBoard from '../components/KanbanBoard'
 import ResumeAnalyzer from '../components/ResumeAnalyzer'
@@ -7,10 +9,11 @@ import ResumeBoard from '../components/ResumeBoard'
 const STATUSES = ['applied', 'interviewing', 'offer', 'rejected']
 
 export default function Dashboard() {
+  const navigate = useNavigate()
   const [jobs, setJobs] = useState([])
   const [resumes, setResumes] = useState([])
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState('all')   // 'all' | resume.id
+  const [activeTab, setActiveTab] = useState('all')
   const [showForm, setShowForm] = useState(false)
   const [showAddResume, setShowAddResume] = useState(false)
   const [form, setForm] = useState({
@@ -98,12 +101,46 @@ export default function Dashboard() {
     }
   }
 
+  function exportCSV() {
+    const headers = ['Company', 'Role', 'Status', 'Applied Date', 'Deadline', 'Salary Min', 'Salary Max', 'Interview Date', 'Notes']
+    const rows = jobs.map((j) => [
+      `"${(j.company || '').replace(/"/g, '""')}"`,
+      `"${(j.role || '').replace(/"/g, '""')}"`,
+      j.status,
+      j.applied_date || '',
+      j.deadline || '',
+      j.salary_min || '',
+      j.salary_max || '',
+      j.interview_at ? format(parseISO(j.interview_at), 'yyyy-MM-dd HH:mm') : '',
+      `"${(j.notes || '').replace(/"/g, '""')}"`,
+    ])
+    const csv = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n')
+    const blob = new Blob([csv], { type: 'text/csv' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `applications-${new Date().toISOString().slice(0, 10)}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+  }
+
   const totalApplied = jobs.length
   const totalInterviewing = jobs.filter((j) => j.status === 'interviewing').length
   const totalOffers = jobs.filter((j) => j.status === 'offer').length
   const responseRate = totalApplied
     ? Math.round(((totalInterviewing + totalOffers) / totalApplied) * 100)
     : 0
+
+  const followUpJobs = jobs.filter((j) => {
+    if (!j.updated_at || j.status === 'offer' || j.status === 'rejected') return false
+    const days = differenceInDays(new Date(), parseISO(j.updated_at))
+    return (j.status === 'applied' && days >= 14) || (j.status === 'interviewing' && days >= 7)
+  })
+
+  const upcomingInterviews = jobs
+    .filter((j) => j.interview_at && new Date(j.interview_at) > new Date())
+    .sort((a, b) => new Date(a.interview_at) - new Date(b.interview_at))
+    .slice(0, 5)
 
   if (loading) {
     return (
@@ -132,7 +169,51 @@ export default function Dashboard() {
         ))}
       </div>
 
-      {/* Resume tabs — only shown when user has at least one resume */}
+      {/* Upcoming interviews */}
+      {upcomingInterviews.length > 0 && (
+        <div className="bg-purple-50 border border-purple-200 rounded-xl p-4 mb-6">
+          <h3 className="text-sm font-semibold text-purple-800 mb-3">Upcoming Interviews</h3>
+          <div className="flex flex-wrap gap-3">
+            {upcomingInterviews.map((j) => (
+              <button
+                key={j.id}
+                onClick={() => navigate(`/jobs/${j.id}`)}
+                className="bg-white border border-purple-200 rounded-lg px-3 py-2 text-left hover:shadow-sm transition-shadow"
+              >
+                <p className="text-sm font-medium text-gray-900">{j.company}</p>
+                <p className="text-xs text-purple-600 mt-0.5">
+                  {format(parseISO(j.interview_at), 'MMM d, h:mm a')}
+                </p>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Follow-up alerts */}
+      {followUpJobs.length > 0 && (
+        <div className="bg-orange-50 border border-orange-200 rounded-xl p-4 mb-6">
+          <h3 className="text-sm font-semibold text-orange-800 mb-1">
+            Follow-up Needed ({followUpJobs.length})
+          </h3>
+          <p className="text-xs text-orange-600 mb-3">
+            These applications haven't had any activity in a while.
+          </p>
+          <div className="flex flex-wrap gap-2">
+            {followUpJobs.slice(0, 8).map((j) => (
+              <button
+                key={j.id}
+                onClick={() => navigate(`/jobs/${j.id}`)}
+                className="text-xs bg-white border border-orange-200 text-orange-700 rounded-full px-3 py-1 hover:bg-orange-100 transition-colors"
+              >
+                {j.company} · {j.role}
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* Resume tabs */}
       {resumes.length > 0 && (
         <div className="flex items-center gap-1 mb-6 border-b border-gray-200 overflow-x-auto">
           <button
@@ -170,7 +251,7 @@ export default function Dashboard() {
         </div>
       )}
 
-      {/* ── Resume board view ── */}
+      {/* Resume board view */}
       {activeResume ? (
         <ResumeBoard
           resume={activeResume}
@@ -181,13 +262,18 @@ export default function Dashboard() {
         />
       ) : (
         <>
-          {/* ── Default "All" board ── */}
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-xl font-bold text-gray-900">
               {resumes.length === 0 ? 'Kanban Board' : 'All Applications'}
             </h2>
             <div className="flex items-center gap-3">
               <ResumeAnalyzer />
+              <button
+                onClick={exportCSV}
+                className="border border-gray-300 text-gray-600 hover:bg-gray-50 text-sm font-medium px-4 py-2 rounded-lg transition-colors"
+              >
+                Export CSV
+              </button>
               {resumes.length === 0 && (
                 <button
                   onClick={() => setShowAddResume(true)}

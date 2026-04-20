@@ -341,6 +341,61 @@ Scoring guide:
         raise HTTPException(status_code=502, detail=f"AI API error: {str(e)}")
 
 
+# ── ATS Score ────────────────────────────────────────────────
+
+class ATSScoreRequest(BaseModel):
+    resume_text: str
+    job_description: str
+
+
+class ATSScoreResponse(BaseModel):
+    score: int
+    matched_keywords: List[str]
+    missing_keywords: List[str]
+    cached: bool = False
+
+
+@app.post("/ai/ats-score", response_model=ATSScoreResponse)
+async def ats_score(req: ATSScoreRequest):
+    if len(req.resume_text.strip()) < 50:
+        raise HTTPException(400, "Resume text is too short — paste your full resume.")
+
+    cache_key = make_cache_key("ats-score", req.job_description, req.resume_text)
+    if cached := await get_cached(cache_key):
+        return ATSScoreResponse(**cached, cached=True)
+
+    prompt = f"""You are an expert ATS (Applicant Tracking System) analyzer.
+Score how well this resume matches the job description.
+
+JOB DESCRIPTION:
+{req.job_description}
+
+RESUME:
+{req.resume_text}
+
+Respond ONLY with a valid JSON object — no markdown, no explanation:
+{{
+  "score": <integer 0-100, how well the resume matches>,
+  "matched_keywords": ["up to 10 skills/keywords present in both resume and JD"],
+  "missing_keywords": ["up to 10 important skills/keywords from JD that are missing in the resume"]
+}}"""
+
+    try:
+        text = call_claude(prompt)
+        data = parse_json_response(text)
+        result = {
+            "score": int(data["score"]),
+            "matched_keywords": data.get("matched_keywords", [])[:10],
+            "missing_keywords": data.get("missing_keywords", [])[:10],
+        }
+        await set_cached(cache_key, result)
+        return ATSScoreResponse(**result)
+    except (json.JSONDecodeError, KeyError) as e:
+        raise HTTPException(500, f"Failed to parse AI response: {e}")
+    except Exception as e:
+        raise HTTPException(502, f"AI API error: {str(e)}")
+
+
 # ── Job Suggestions ───────────────────────────────────────────
 
 @app.get("/ai/job-suggestions")

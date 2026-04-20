@@ -1,7 +1,7 @@
 import { useDraggable } from '@dnd-kit/core'
 import { CSS } from '@dnd-kit/utilities'
 import { useNavigate } from 'react-router-dom'
-import { differenceInDays, parseISO } from 'date-fns'
+import { differenceInDays, parseISO, format } from 'date-fns'
 
 const STATUS_COLORS = {
   applied: 'bg-blue-100 text-blue-700',
@@ -28,6 +28,17 @@ export default function JobCard({ job }) {
       ? differenceInDays(new Date(), parseISO(job.applied_date))
       : null
 
+  const needsFollowUp = (() => {
+    if (!job.updated_at || job.status === 'offer' || job.status === 'rejected') return false
+    const days = differenceInDays(new Date(), parseISO(job.updated_at))
+    return (job.status === 'applied' && days >= 14) || (job.status === 'interviewing' && days >= 7)
+  })()
+
+  const upcomingInterview =
+    job.interview_at && new Date(job.interview_at) > new Date()
+      ? parseISO(job.interview_at)
+      : null
+
   return (
     <div
       ref={setNodeRef}
@@ -35,14 +46,23 @@ export default function JobCard({ job }) {
       {...listeners}
       {...attributes}
       onClick={() => navigate(`/jobs/${job.id}`)}
-      className="bg-white rounded-lg border border-gray-200 p-4 shadow-sm hover:shadow-md
-                 transition-shadow select-none group"
+      className={`bg-white rounded-lg border p-4 shadow-sm hover:shadow-md
+                 transition-shadow select-none group
+                 ${needsFollowUp ? 'border-orange-300' : 'border-gray-200'}`}
     >
-      {/* Company + role */}
+      {needsFollowUp && (
+        <p className="text-xs text-orange-500 font-medium mb-1.5">⚠ Follow-up needed</p>
+      )}
+
       <p className="font-semibold text-gray-900 truncate">{job.company}</p>
       <p className="text-sm text-gray-500 truncate mt-0.5">{job.role}</p>
 
-      {/* Salary range */}
+      {upcomingInterview && (
+        <p className="text-xs text-purple-600 mt-2 font-medium">
+          📅 {format(upcomingInterview, 'MMM d, h:mm a')}
+        </p>
+      )}
+
       {(job.salary_min || job.salary_max) && (
         <p className="text-xs text-gray-400 mt-2">
           {job.salary_min ? `$${(job.salary_min / 1000).toFixed(0)}k` : '?'}
@@ -51,7 +71,6 @@ export default function JobCard({ job }) {
         </p>
       )}
 
-      {/* Days since applied */}
       <div className="flex items-center justify-between mt-3">
         {daysSince !== null && (
           <span className="text-xs text-gray-400">

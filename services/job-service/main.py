@@ -58,6 +58,7 @@ class Job(Base):
     salary_min      = Column(Integer)
     salary_max      = Column(Integer)
     resume_id       = Column(UUID(as_uuid=True), nullable=True)
+    interview_at    = Column(DateTime(timezone=True), nullable=True)
     created_at      = Column(DateTime(timezone=True), server_default=text("now()"))
     updated_at      = Column(DateTime(timezone=True), server_default=text("now()"))
 
@@ -91,6 +92,7 @@ class JobCreate(BaseModel):
     salary_min: Optional[int] = None
     salary_max: Optional[int] = None
     resume_id: Optional[uuid.UUID] = None
+    interview_at: Optional[datetime] = None
 
 
 class JobUpdate(BaseModel):
@@ -102,6 +104,7 @@ class JobUpdate(BaseModel):
     salary_min: Optional[int] = None
     salary_max: Optional[int] = None
     resume_id: Optional[uuid.UUID] = None
+    interview_at: Optional[datetime] = None
 
 
 class StatusUpdate(BaseModel):
@@ -121,6 +124,7 @@ class JobResponse(BaseModel):
     salary_min: Optional[int] = None
     salary_max: Optional[int] = None
     resume_id: Optional[uuid.UUID] = None
+    interview_at: Optional[datetime] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
 
@@ -159,6 +163,7 @@ async def lifespan(app: FastAPI):
     try:
         with engine.connect() as conn:
             conn.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS resume_id UUID"))
+            conn.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS interview_at TIMESTAMPTZ"))
             conn.commit()
     except Exception as e:
         print(f"[DB] Migration warning: {e}")
