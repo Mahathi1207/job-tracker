@@ -3,6 +3,15 @@ import { useParams, useNavigate } from 'react-router-dom'
 import { format, parseISO } from 'date-fns'
 import api from '../api/axios'
 
+async function fetchResumes() {
+  try {
+    const res = await api.get('/resumes')
+    return res.data
+  } catch {
+    return []
+  }
+}
+
 const STATUSES = ['applied', 'interviewing', 'offer', 'rejected']
 
 const STATUS_BADGE = {
@@ -28,9 +37,12 @@ export default function JobDetail() {
   const [aiLoading, setAiLoading] = useState(false)
   const [notes, setNotes] = useState('')
   const [savingNotes, setSavingNotes] = useState(false)
+  const [resumes, setResumes] = useState([])
+  const [movingBoard, setMovingBoard] = useState(false)
 
   useEffect(() => {
     fetchJob()
+    fetchResumes().then(setResumes)
   }, [id])
 
   async function fetchJob() {
@@ -87,6 +99,18 @@ export default function JobDetail() {
       console.error('Notes save failed', err)
     } finally {
       setSavingNotes(false)
+    }
+  }
+
+  async function handleMoveBoard(resumeId) {
+    setMovingBoard(true)
+    try {
+      const res = await api.patch(`/jobs/${id}`, { resume_id: resumeId || null })
+      setJob(res.data)
+    } catch (err) {
+      console.error('Failed to move board', err)
+    } finally {
+      setMovingBoard(false)
     }
   }
 
@@ -172,6 +196,24 @@ export default function JobDetail() {
                 ))}
               </div>
             </div>
+
+            {/* Resume board assignment */}
+            {resumes.length > 0 && (
+              <div className="mt-4 pt-4 border-t border-gray-100">
+                <p className="text-xs text-gray-400 uppercase tracking-wide mb-2">Resume Board</p>
+                <select
+                  value={job.resume_id || ''}
+                  onChange={(e) => handleMoveBoard(e.target.value)}
+                  disabled={movingBoard}
+                  className="w-full border border-gray-200 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50"
+                >
+                  <option value="">— No board (All Applications) —</option>
+                  {resumes.map((r) => (
+                    <option key={r.id} value={r.id}>{r.name}</option>
+                  ))}
+                </select>
+              </div>
+            )}
           </div>
 
           {/* Notes */}

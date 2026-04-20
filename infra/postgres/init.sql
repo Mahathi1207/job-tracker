@@ -38,6 +38,20 @@ CREATE TABLE IF NOT EXISTS jobs (
 CREATE INDEX IF NOT EXISTS idx_jobs_user_id ON jobs (user_id);
 CREATE INDEX IF NOT EXISTS idx_jobs_status  ON jobs (status);
 
+-- ── Resumes table (owned by job-service) ─────────────────────
+CREATE TABLE IF NOT EXISTS resumes (
+    id         UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),
+    user_id    UUID        NOT NULL,
+    name       VARCHAR(100) NOT NULL,
+    keywords   TEXT,
+    created_at TIMESTAMPTZ DEFAULT NOW()
+);
+
+CREATE INDEX IF NOT EXISTS idx_resumes_user_id ON resumes (user_id);
+
+-- resume_id links a job application to the resume used for it
+ALTER TABLE jobs ADD COLUMN IF NOT EXISTS resume_id UUID REFERENCES resumes(id) ON DELETE SET NULL;
+
 -- ── Notification logs table (owned by notification-service) ──
 CREATE TABLE IF NOT EXISTS notification_logs (
     id                UUID        PRIMARY KEY DEFAULT uuid_generate_v4(),

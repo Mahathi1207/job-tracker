@@ -10,7 +10,9 @@ from typing import Optional, List
 from contextlib import asynccontextmanager
 
 import pypdf
-from fastapi import File, Form, UploadFile
+import httpx
+from datetime import date
+from fastapi import File, Form, UploadFile, Query
 
 from groq import Groq
 import redis.asyncio as aioredis
@@ -23,6 +25,8 @@ load_dotenv()
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379")
+ADZUNA_APP_ID = os.getenv("ADZUNA_APP_ID", "")
+ADZUNA_APP_KEY = os.getenv("ADZUNA_APP_KEY", "")
 CACHE_TTL = 3600  # 1 hour in seconds
 
 # llama-3.3-70b-versatile — best free model on Groq for structured JSON output
@@ -335,3 +339,84 @@ Scoring guide:
         raise HTTPException(status_code=500, detail=f"Failed to parse AI response: {e}")
     except Exception as e:
         raise HTTPException(status_code=502, detail=f"AI API error: {str(e)}")
+
+
+# ── Job Suggestions ───────────────────────────────────────────
+
+@app.get("/ai/job-suggestions")
+async def job_suggestions(
+    keywords: str = Query(..., description="Search terms derived from resume, e.g. 'React frontend engineer'"),
+    country: str = Query("us"),
+):
+    """
+    Returns up to 15 job openings posted today matching the given keywords.
+    Uses Adzuna API if configured (ADZUNA_APP_ID + ADZUNA_APP_KEY env vars),
+    otherwise falls back to Remotive (free, no key, remote jobs only).
+    Results are cached in Redis for the rest of the calendar day.
+    """
+    today = date.today().isoformat()
+    cache_key = f"suggestions:{country}:{hashlib.sha256(f'{keywords}:{today}'.encode()).hexdigest()}"
+
+    if cached := await get_cached(cache_key):
+        return {"jobs": cached["jobs"], "cached": True, "source": cached.get("source", "cache")}
+
+    jobs = []
+    source = "none"
+
+    if ADZUNA_APP_ID and ADZUNA_APP_KEY:
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    f"https://api.adzuna.com/v1/api/jobs/{country}/search/1",
+                    params={
+                        "app_id": ADZUNA_APP_ID,
+                        "app_key": ADZUNA_APP_KEY,
+                        "results_per_page": 15,
+                        "what": keywords,
+                        "max_days_old": 1,
+                        "sort_by": "date",
+                    },
+                )
+                data = resp.json()
+            jobs = [
+                {
+                    "title": r.get("title", ""),
+                    "company": r.get("company", {}).get("display_name", ""),
+                    "location": r.get("location", {}).get("display_name", ""),
+                    "redirect_url": r.get("redirect_url", ""),
+                    "salary_min": r.get("salary_min"),
+                    "salary_max": r.get("salary_max"),
+                }
+                for r in data.get("results", [])
+            ]
+            source = "adzuna"
+        except Exception as e:
+            print(f"[Adzuna] Error: {e}")
+
+    # Fallback: Remotive (free, no auth, remote jobs)
+    if not jobs:
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    "https://remotive.com/api/remote-jobs",
+                    params={"search": keywords, "limit": 15},
+                )
+                data = resp.json()
+            jobs = [
+                {
+                    "title": r.get("title", ""),
+                    "company": r.get("company_name", ""),
+                    "location": r.get("candidate_required_location", "Remote"),
+                    "redirect_url": r.get("url", ""),
+                    "salary_min": None,
+                    "salary_max": None,
+                }
+                for r in data.get("jobs", [])[:15]
+            ]
+            source = "remotive"
+        except Exception as e:
+            print(f"[Remotive] Error: {e}")
+
+    result = {"jobs": jobs, "source": source}
+    await set_cached(cache_key, result)
+    return {"jobs": jobs, "cached": False, "source": source}

@@ -164,6 +164,13 @@ async def ai_proxy(path: str, request: Request):
     return await proxy(request, f"{AI_SERVICE_URL}/ai{path}")
 
 
+# ── /resumes/* → job-service (JWT required) ──────────────────
+@app.api_route("/resumes{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+async def resumes_proxy(path: str, request: Request):
+    require_auth(request)
+    return await proxy(request, f"{JOB_SERVICE_URL}/resumes{path}")
+
+
 # ── /notifications/* → notification-service ──────────────────
 @app.api_route(
     "/notifications{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"]

@@ -92,6 +92,8 @@ services:
     environment:
       - GROQ_API_KEY=${GROQ_API_KEY}
       - REDIS_URL=redis://redis:6379
+      - ADZUNA_APP_ID=${ADZUNA_APP_ID:-}
+      - ADZUNA_APP_KEY=${ADZUNA_APP_KEY:-}
     depends_on:
       redis:
         condition: service_healthy
