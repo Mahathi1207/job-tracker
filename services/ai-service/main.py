@@ -102,14 +102,33 @@ def call_claude(prompt: str, max_tokens: int = 1024) -> str:
 
 def parse_json_response(text: str) -> dict:
     """
-    Attempts to parse the model's response as JSON.
-    Strips markdown code fences that the model sometimes adds.
+    Parses the model's response as JSON.
+    Strips markdown fences and fixes unescaped newlines inside string values.
     """
     cleaned = text.strip()
     if cleaned.startswith("```"):
-        # Remove ```json ... ``` wrapper
         cleaned = cleaned.split("\n", 1)[-1].rsplit("```", 1)[0].strip()
-    return json.loads(cleaned)
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        # LLM sometimes puts literal newlines inside JSON string values.
+        # Walk char-by-char and escape control chars only when inside a string.
+        result, in_string, i = [], False, 0
+        while i < len(cleaned):
+            c = cleaned[i]
+            if c == '"' and (i == 0 or cleaned[i - 1] != "\\"):
+                in_string = not in_string
+                result.append(c)
+            elif in_string and c == "\n":
+                result.append("\\n")
+            elif in_string and c == "\r":
+                result.append("\\r")
+            elif in_string and c == "\t":
+                result.append("\\t")
+            else:
+                result.append(c)
+            i += 1
+        return json.loads("".join(result))
 
 
 # ── FastAPI app ───────────────────────────────────────────────
@@ -418,6 +437,14 @@ async def job_suggestions(
     jobs = []
     source = "none"
 
+    # Build a set of meaningful search terms (words with 3+ chars) for relevance filtering
+    search_words = {w.lower() for w in keywords.replace(',', ' ').split() if len(w) >= 3}
+
+    def is_relevant(title: str) -> bool:
+        """Return True only if the job title contains at least one search keyword."""
+        title_lower = title.lower()
+        return any(word in title_lower for word in search_words)
+
     if ADZUNA_APP_ID and ADZUNA_APP_KEY:
         try:
             async with httpx.AsyncClient(timeout=10.0) as client:
@@ -443,6 +470,7 @@ async def job_suggestions(
                     "salary_max": r.get("salary_max"),
                 }
                 for r in data.get("results", [])
+                if is_relevant(r.get("title", ""))
             ]
             source = "adzuna"
         except Exception as e:
@@ -467,6 +495,7 @@ async def job_suggestions(
                     "salary_max": None,
                 }
                 for r in data.get("jobs", [])[:15]
+                if is_relevant(r.get("title", ""))
             ]
             source = "remotive"
         except Exception as e:

@@ -7,6 +7,7 @@ import Register from './pages/Register'
 import Dashboard from './pages/Dashboard'
 import JobDetail from './pages/JobDetail'
 import Charts from './pages/Charts'
+import Admin from './pages/Admin'
 
 export default function App() {
   return (
@@ -66,6 +67,19 @@ export default function App() {
                     <Navbar />
                     <main className="max-w-7xl mx-auto px-4 py-6">
                       <Charts />
+                    </main>
+                  </>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/admin"
+              element={
+                <ProtectedRoute>
+                  <>
+                    <Navbar />
+                    <main className="max-w-7xl mx-auto px-4 py-6">
+                      <Admin />
                     </main>
                   </>
                 </ProtectedRoute>

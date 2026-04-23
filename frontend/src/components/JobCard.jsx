@@ -1,7 +1,9 @@
+import { useState } from 'react'
 import { useDraggable } from '@dnd-kit/core'
 import { CSS } from '@dnd-kit/utilities'
 import { useNavigate } from 'react-router-dom'
 import { differenceInDays, parseISO, format } from 'date-fns'
+import api from '../api/axios'
 
 const STATUS_COLORS = {
   applied: 'bg-blue-100 text-blue-700',
@@ -10,8 +12,9 @@ const STATUS_COLORS = {
   rejected: 'bg-red-100 text-red-700',
 }
 
-export default function JobCard({ job }) {
+export default function JobCard({ job, onJobUpdated }) {
   const navigate = useNavigate()
+  const [marking, setMarking] = useState(false)
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: job.id,
     data: { job },
@@ -29,10 +32,25 @@ export default function JobCard({ job }) {
       : null
 
   const needsFollowUp = (() => {
-    if (!job.updated_at || job.status === 'offer' || job.status === 'rejected') return false
-    const days = differenceInDays(new Date(), parseISO(job.updated_at))
-    return (job.status === 'applied' && days >= 14) || (job.status === 'interviewing' && days >= 7)
+    if (!job.applied_date || job.status === 'offer' || job.status === 'rejected') return false
+    const threshold = job.status === 'applied' ? 14 : 7
+    if (differenceInDays(new Date(), parseISO(job.applied_date)) < threshold) return false
+    if (job.updated_at && differenceInDays(new Date(), parseISO(job.updated_at)) < threshold) return false
+    return true
   })()
+
+  async function handleMarkFollowedUp(e) {
+    e.stopPropagation()
+    setMarking(true)
+    try {
+      const res = await api.post(`/jobs/${job.id}/mark-followed-up`)
+      onJobUpdated?.(res.data)
+    } catch (err) {
+      console.error('Failed to mark followed up', err)
+    } finally {
+      setMarking(false)
+    }
+  }
 
   const upcomingInterview =
     job.interview_at && new Date(job.interview_at) > new Date()
@@ -51,7 +69,16 @@ export default function JobCard({ job }) {
                  ${needsFollowUp ? 'border-orange-300' : 'border-gray-200'}`}
     >
       {needsFollowUp && (
-        <p className="text-xs text-orange-500 font-medium mb-1.5">⚠ Follow-up needed</p>
+        <div className="flex items-center justify-between mb-1.5">
+          <p className="text-xs text-orange-500 font-medium">⚠ Follow-up needed</p>
+          <button
+            onClick={handleMarkFollowedUp}
+            disabled={marking}
+            className="text-xs text-orange-500 hover:text-orange-700 border border-orange-200 rounded px-1.5 py-0.5 hover:bg-orange-50 transition-colors disabled:opacity-50"
+          >
+            {marking ? '…' : 'Done ✓'}
+          </button>
+        </div>
       )}
 
       <p className="font-semibold text-gray-900 truncate">{job.company}</p>

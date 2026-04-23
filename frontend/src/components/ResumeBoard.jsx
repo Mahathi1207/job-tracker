@@ -47,12 +47,19 @@ export default function ResumeBoard({ resume, jobs, allJobs, onJobUpdated, onJob
   }
 
   const boardJobs = jobs.filter((j) => j.resume_id === resume.id)
-  const keywords = resume.keywords || resume.name
+  const keywords = resume.keywords?.trim() || ''
 
   return (
     <div>
-      {/* Today's openings for this resume */}
-      <JobSuggestions keywords={keywords} />
+      {/* Today's openings — only shown when explicit keywords are set */}
+      {keywords ? (
+        <JobSuggestions keywords={keywords} />
+      ) : (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl px-5 py-4 mb-6 text-sm text-amber-700">
+          Add <strong>job search keywords</strong> to this board to see matching openings.
+          Edit the board name and add keywords like <em>"React frontend engineer"</em> or <em>"Python backend"</em>.
+        </div>
+      )}
 
       {/* Board header */}
       <div className="flex items-center justify-between mb-4">

@@ -33,7 +33,7 @@ REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379")
 # ── Demo seed credentials (created on startup if DB is empty) ─
 DEMO_USER_ID = "a0eebc99-9c0b-4ef8-bb6d-6bb9bd380a11"
 DEMO_EMAIL = "demo@jobtracker.com"
-DEMO_PASSWORD = "demo1234"
+DEMO_PASSWORD = os.getenv("DEMO_PASSWORD", "")
 DEMO_NAME = "Demo User"
 
 # ── Security helpers ──────────────────────────────────────────
@@ -89,11 +89,21 @@ class TokenVerifyResponse(BaseModel):
 # ── JWT helpers ───────────────────────────────────────────────
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
     to_encode = data.copy()
-    expire = datetime.now(timezone.utc) + (
-        expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
-    )
-    to_encode.update({"exp": expire})
+    now = datetime.now(timezone.utc)
+    expire = now + (expires_delta or timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES))
+    to_encode.update({"exp": expire, "iat": int(now.timestamp())})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def is_session_revoked(user_id: str, issued_at: int) -> bool:
+    """Returns True if admin revoked all sessions issued before a certain timestamp."""
+    try:
+        revoke_before = r.get(f"revoke_before:{user_id}")
+        if revoke_before and issued_at < int(revoke_before):
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def is_token_blacklisted(token: str) -> bool:
@@ -144,30 +154,26 @@ app.add_middleware(
 )
 
 
+
+
 @app.on_event("startup")
 def seed_demo_user():
-    """
-    Create the demo user on first startup, or fix the placeholder hash that
-    init.sql inserts before auth-service has run for the first time.
-    """
+    if not DEMO_PASSWORD:
+        return
     db = SessionLocal()
     try:
         existing = db.query(User).filter(User.email == DEMO_EMAIL).first()
         if not existing:
-            demo = User(
+            db.add(User(
                 id=uuid.UUID(DEMO_USER_ID),
                 email=DEMO_EMAIL,
                 hashed_password=pwd_context.hash(DEMO_PASSWORD),
                 full_name=DEMO_NAME,
-            )
-            db.add(demo)
+            ))
             db.commit()
-            print(f"[Auth] Demo user created — email: {DEMO_EMAIL}, password: {DEMO_PASSWORD}")
         elif not existing.hashed_password.startswith("$2b$"):
-            # init.sql inserted a placeholder — replace it with a real bcrypt hash
             existing.hashed_password = pwd_context.hash(DEMO_PASSWORD)
             db.commit()
-            print(f"[Auth] Demo user hash updated — email: {DEMO_EMAIL}, password: {DEMO_PASSWORD}")
     except Exception as e:
         print(f"[Auth] Could not seed demo user: {e}")
     finally:
@@ -201,11 +207,10 @@ async def login(
     form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)
 ):
     user = db.query(User).filter(User.email == form_data.username).first()
-    if not user or not pwd_context.verify(form_data.password, user.hashed_password):
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Incorrect email or password",
-        )
+    if not user:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="EMAIL_NOT_FOUND")
+    if not pwd_context.verify(form_data.password, user.hashed_password):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="WRONG_PASSWORD")
     if not user.is_active:
         raise HTTPException(status_code=400, detail="Inactive user")
 
@@ -232,6 +237,38 @@ async def logout(token: str = Depends(oauth2_scheme)):
     return {"message": "Successfully logged out"}
 
 
+@app.get("/auth/admin/users")
+async def admin_list_users(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.email != DEMO_EMAIL:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    users = db.query(User).order_by(User.created_at.desc()).all()
+    return [
+        {
+            "id": str(u.id),
+            "email": u.email,
+            "full_name": u.full_name,
+            "is_active": u.is_active,
+            "created_at": u.created_at.isoformat() if u.created_at else None,
+        }
+        for u in users
+    ]
+
+
+@app.post("/auth/admin/revoke/{user_id}")
+async def admin_revoke_sessions(
+    user_id: str,
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.email != DEMO_EMAIL:
+        raise HTTPException(status_code=403, detail="Admin access required")
+    now = int(datetime.now(timezone.utc).timestamp())
+    r.setex(f"revoke_before:{user_id}", 60 * 60 * 24 * 2, str(now))
+    return {"message": f"All sessions for {user_id} revoked"}
+
+
 @app.post("/auth/verify", response_model=TokenVerifyResponse)
 async def verify_token(authorization: str = Header(...)):
     """
@@ -249,8 +286,11 @@ async def verify_token(authorization: str = Header(...)):
     try:
         payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
         user_id = payload.get("sub")
-        email = payload.get("email")
+        email   = payload.get("email")
+        iat     = payload.get("iat", 0)
         if user_id is None:
+            return TokenVerifyResponse(valid=False)
+        if is_session_revoked(user_id, iat):
             return TokenVerifyResponse(valid=False)
         return TokenVerifyResponse(valid=True, user_id=user_id, email=email)
     except JWTError:

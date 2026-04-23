@@ -63,6 +63,7 @@ services:
       - DATABASE_URL=postgresql://admin:secret@postgres:5432/jobtracker
       - JWT_SECRET=supersecretkey123
       - REDIS_URL=redis://redis:6379
+      - DEMO_PASSWORD=${DEMO_PASSWORD:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -105,10 +106,13 @@ services:
     environment:
       - DATABASE_URL=postgresql://admin:secret@postgres:5432/jobtracker
       - KAFKA_BOOTSTRAP_SERVERS=kafka:9092
-      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_HOST=${SMTP_HOST:-smtp.gmail.com}
       - SMTP_PORT=${SMTP_PORT:-587}
       - SMTP_USER=${SMTP_USER:-}
-      - SMTP_PASSWORD=${SMTP_PASSWORD}
+      - SMTP_PASSWORD=${SMTP_PASSWORD:-}
+      - ADZUNA_APP_ID=${ADZUNA_APP_ID:-}
+      - ADZUNA_APP_KEY=${ADZUNA_APP_KEY:-}
+      - SCHEDULER_TIMEZONE=${SCHEDULER_TIMEZONE:-America/Chicago}
       - AUTH_SERVICE_URL=http://auth-service:8001
       - JOB_SERVICE_URL=http://job-service:8002
     depends_on:

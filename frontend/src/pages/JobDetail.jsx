@@ -21,19 +21,21 @@ const STATUS_BADGE = {
   rejected: 'bg-red-100 text-red-700',
 }
 
-const AI_TABS = [
-  { key: 'resume', label: 'Resume Tips', endpoint: '/ai/resume-tips' },
-  { key: 'interview', label: 'Interview Prep', endpoint: '/ai/interview-prep' },
-  { key: 'cover', label: 'Cover Letter', endpoint: '/ai/cover-letter' },
-  { key: 'ats', label: 'ATS Score', endpoint: null },
+const ALL_AI_TABS = [
+  { key: 'interview', label: 'Interview Prep', endpoint: '/ai/interview-prep', statuses: ['applied', 'interviewing'] },
+  { key: 'cover', label: 'Cover Letter', endpoint: '/ai/cover-letter', statuses: ['applied', 'interviewing', 'offer'] },
 ]
+
+function getTabsForStatus(status) {
+  return ALL_AI_TABS.filter((t) => t.statuses.includes(status))
+}
 
 export default function JobDetail() {
   const { id } = useParams()
   const navigate = useNavigate()
   const [job, setJob] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [activeTab, setActiveTab] = useState('resume')
+  const [activeTab, setActiveTab] = useState('interview')
   const [aiData, setAiData] = useState({})
   const [aiLoading, setAiLoading] = useState(false)
   const [notes, setNotes] = useState('')
@@ -65,8 +67,8 @@ export default function JobDetail() {
   }
 
   async function fetchAiTips() {
-    if (!job?.job_description || activeTab === 'ats') return
-    const tab = AI_TABS.find((t) => t.key === activeTab)
+    if (!job?.job_description) return
+    const tab = getTabsForStatus(job.status).find((t) => t.key === activeTab)
     if (!tab || aiData[activeTab]) return
 
     setAiLoading(true)
@@ -174,7 +176,7 @@ export default function JobDetail() {
         ← Back to Dashboard
       </button>
 
-      <div className="flex gap-6">
+      <div className="flex flex-col lg:flex-row gap-6">
         {/* ── Left panel ─────────────────────────────────────── */}
         <div className="flex-1 space-y-5">
           {/* Header card */}
@@ -304,70 +306,63 @@ export default function JobDetail() {
           </div>
         </div>
 
-        {/* ── Right panel: AI assistant ───────────────────────── */}
-        <div className="w-96 flex-shrink-0">
-          <div className="bg-white rounded-xl border border-gray-200 shadow-sm sticky top-6">
-            <div className="p-5 border-b border-gray-100">
-              <h3 className="font-semibold text-gray-800">AI Assistant</h3>
-              {!job.job_description && (
-                <p className="text-xs text-amber-600 mt-1">
-                  Add a job description to enable AI tips.
-                </p>
-              )}
-            </div>
+        {/* ── Right panel: AI assistant (hidden for rejected) ─── */}
+        {job.status !== 'rejected' && (
+          <div className="w-full lg:w-96 lg:flex-shrink-0">
+            <div className="bg-white rounded-xl border border-gray-200 shadow-sm sticky top-6">
+              <div className="p-5 border-b border-gray-100">
+                <h3 className="font-semibold text-gray-800">AI Assistant</h3>
+                {!job.job_description && (
+                  <p className="text-xs text-amber-600 mt-1">
+                    Add a job description to enable AI tips.
+                  </p>
+                )}
+              </div>
 
-            {/* Tabs */}
-            <div className="flex border-b border-gray-100">
-              {AI_TABS.map((tab) => (
-                <button
-                  key={tab.key}
-                  onClick={() => setActiveTab(tab.key)}
-                  className={`flex-1 text-xs py-2.5 font-medium transition-colors ${
-                    activeTab === tab.key
-                      ? 'text-blue-600 border-b-2 border-blue-600'
-                      : 'text-gray-500 hover:text-gray-700'
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              ))}
-            </div>
-
-            {/* AI content */}
-            <div className="p-5 min-h-[300px]">
-              {!job.job_description ? (
-                <p className="text-sm text-gray-400 text-center pt-12">
-                  No job description provided.
-                </p>
-              ) : activeTab === 'ats' ? (
-                <AtsScorePanel
-                  data={aiData.ats}
-                  loading={aiLoading}
-                  resumeText={resumeText}
-                  onResumeTextChange={setResumeText}
-                  onScore={fetchAtsScore}
-                  onRescore={() => setAiData((prev) => ({ ...prev, ats: null }))}
-                />
-              ) : aiLoading ? (
-                <div className="flex flex-col items-center gap-3 pt-12">
-                  <div className="w-6 h-6 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
-                  <p className="text-xs text-gray-400">Claude is thinking…</p>
-                </div>
-              ) : aiData[activeTab] ? (
-                <AiContent tab={activeTab} data={aiData[activeTab]} />
-              ) : (
-                <div className="flex flex-col items-center gap-3 pt-12">
+              {/* Tabs */}
+              <div className="flex border-b border-gray-100">
+                {getTabsForStatus(job.status).map((tab) => (
                   <button
-                    onClick={fetchAiTips}
-                    className="text-sm px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                    key={tab.key}
+                    onClick={() => setActiveTab(tab.key)}
+                    className={`flex-1 text-xs py-2.5 font-medium transition-colors ${
+                      activeTab === tab.key
+                        ? 'text-blue-600 border-b-2 border-blue-600'
+                        : 'text-gray-500 hover:text-gray-700'
+                    }`}
                   >
-                    Generate tips
+                    {tab.label}
                   </button>
-                </div>
-              )}
+                ))}
+              </div>
+
+              {/* AI content */}
+              <div className="p-5 min-h-[300px]">
+                {!job.job_description ? (
+                  <p className="text-sm text-gray-400 text-center pt-12">
+                    No job description provided.
+                  </p>
+                ) : aiLoading ? (
+                  <div className="flex flex-col items-center gap-3 pt-12">
+                    <div className="w-6 h-6 border-4 border-blue-500 border-t-transparent rounded-full animate-spin" />
+                    <p className="text-xs text-gray-400">Thinking…</p>
+                  </div>
+                ) : aiData[activeTab] ? (
+                  <AiContent tab={activeTab} data={aiData[activeTab]} />
+                ) : (
+                  <div className="flex flex-col items-center gap-3 pt-12">
+                    <button
+                      onClick={fetchAiTips}
+                      className="text-sm px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+                    >
+                      Generate tips
+                    </button>
+                  </div>
+                )}
+              </div>
             </div>
           </div>
-        </div>
+        )}
       </div>
     </div>
   )

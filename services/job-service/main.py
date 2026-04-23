@@ -14,7 +14,7 @@ import httpx
 from aiokafka import AIOKafkaProducer
 from fastapi import FastAPI, Depends, HTTPException, status, Header, Query
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy import Column, String, DateTime, Date, Integer, Text, text
+from sqlalchemy import Column, String, DateTime, Date, Integer, Text, text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
@@ -57,6 +57,7 @@ class Job(Base):
     deadline        = Column(Date)
     salary_min      = Column(Integer)
     salary_max      = Column(Integer)
+    location        = Column(String, nullable=True)
     resume_id       = Column(UUID(as_uuid=True), nullable=True)
     interview_at    = Column(DateTime(timezone=True), nullable=True)
     created_at      = Column(DateTime(timezone=True), server_default=text("now()"))
@@ -91,6 +92,7 @@ class JobCreate(BaseModel):
     deadline: Optional[date] = None
     salary_min: Optional[int] = None
     salary_max: Optional[int] = None
+    location: Optional[str] = None
     resume_id: Optional[uuid.UUID] = None
     interview_at: Optional[datetime] = None
 
@@ -103,6 +105,7 @@ class JobUpdate(BaseModel):
     deadline: Optional[date] = None
     salary_min: Optional[int] = None
     salary_max: Optional[int] = None
+    location: Optional[str] = None
     resume_id: Optional[uuid.UUID] = None
     interview_at: Optional[datetime] = None
 
@@ -123,6 +126,7 @@ class JobResponse(BaseModel):
     deadline: Optional[date] = None
     salary_min: Optional[int] = None
     salary_max: Optional[int] = None
+    location: Optional[str] = None
     resume_id: Optional[uuid.UUID] = None
     interview_at: Optional[datetime] = None
     created_at: datetime
@@ -164,6 +168,7 @@ async def lifespan(app: FastAPI):
         with engine.connect() as conn:
             conn.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS resume_id UUID"))
             conn.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS interview_at TIMESTAMPTZ"))
+            conn.execute(text("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS location VARCHAR"))
             conn.commit()
     except Exception as e:
         print(f"[DB] Migration warning: {e}")
@@ -307,6 +312,56 @@ async def update_job(
         raise HTTPException(404, "Job not found")
     for field, value in job_in.model_dump(exclude_unset=True).items():
         setattr(job, field, value)
+    job.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(job)
+    return job
+
+
+@app.get("/jobs/admin/stats")
+async def admin_job_stats(
+    user_info: dict = Depends(get_current_user_info),
+    db: Session = Depends(get_db),
+):
+    if user_info.get("email") != "demo@jobtracker.com":
+        raise HTTPException(403, "Admin access required")
+
+    counts = (
+        db.query(Job.user_id, Job.status, func.count(Job.id).label("n"))
+        .group_by(Job.user_id, Job.status)
+        .all()
+    )
+    last_active = (
+        db.query(Job.user_id, func.max(Job.updated_at).label("last_at"))
+        .group_by(Job.user_id)
+        .all()
+    )
+
+    stats: dict = {}
+    for row in counts:
+        uid = str(row.user_id)
+        if uid not in stats:
+            stats[uid] = {"applied": 0, "interviewing": 0, "offer": 0, "rejected": 0, "total": 0, "last_activity": None}
+        stats[uid][row.status] = row.n
+        stats[uid]["total"] += row.n
+
+    for row in last_active:
+        uid = str(row.user_id)
+        if uid in stats:
+            stats[uid]["last_activity"] = row.last_at.isoformat() if row.last_at else None
+
+    return stats
+
+
+@app.post("/jobs/{job_id}/mark-followed-up", response_model=JobResponse)
+async def mark_followed_up(
+    job_id: uuid.UUID,
+    user_info: dict = Depends(get_current_user_info),
+    db: Session = Depends(get_db),
+):
+    job = db.query(Job).filter(Job.id == job_id, Job.user_id == uuid.UUID(user_info["user_id"])).first()
+    if not job:
+        raise HTTPException(404, "Job not found")
     job.updated_at = datetime.now(timezone.utc)
     db.commit()
     db.refresh(job)

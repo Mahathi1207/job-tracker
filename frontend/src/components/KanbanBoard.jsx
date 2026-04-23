@@ -11,7 +11,7 @@ const COLUMNS = [
   { id: 'rejected', label: 'Rejected', color: 'border-red-400' },
 ]
 
-function Column({ id, label, color, jobs }) {
+function Column({ id, label, color, jobs, onJobUpdated }) {
   const { setNodeRef, isOver } = useDroppable({ id })
 
   return (
@@ -31,7 +31,7 @@ function Column({ id, label, color, jobs }) {
       {/* Cards */}
       <div className="px-3 pb-4 flex flex-col gap-3 min-h-[120px]">
         {jobs.map((job) => (
-          <JobCard key={job.id} job={job} />
+          <JobCard key={job.id} job={job} onJobUpdated={onJobUpdated} />
         ))}
         {jobs.length === 0 && (
           <p className="text-xs text-center text-gray-400 pt-6">Drop here</p>
@@ -83,7 +83,7 @@ export default function KanbanBoard({ jobs, onJobUpdated }) {
     >
       <div className="flex gap-4 overflow-x-auto pb-4">
         {COLUMNS.map((col) => (
-          <Column key={col.id} {...col} jobs={grouped[col.id]} />
+          <Column key={col.id} {...col} jobs={grouped[col.id]} onJobUpdated={onJobUpdated} />
         ))}
       </div>
 
