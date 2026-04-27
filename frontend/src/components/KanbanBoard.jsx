@@ -3,6 +3,7 @@ import { DndContext, DragOverlay, closestCenter, PointerSensor, useSensor, useSe
 import { useDroppable } from '@dnd-kit/core'
 import JobCard from './JobCard'
 import api from '../api/axios'
+import { triggerConfetti } from '../utils/confetti'
 
 const COLUMNS = [
   { id: 'applied', label: 'Applied', color: 'border-blue-400' },
@@ -69,6 +70,7 @@ export default function KanbanBoard({ jobs, onJobUpdated }) {
     try {
       const res = await api.patch(`/jobs/${active.id}/status`, { status: newStatus })
       onJobUpdated(res.data)
+      if (newStatus === 'offer') triggerConfetti()
     } catch (err) {
       console.error('Failed to update job status', err)
     }

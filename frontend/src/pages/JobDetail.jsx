@@ -23,11 +23,41 @@ const STATUS_BADGE = {
 
 const ALL_AI_TABS = [
   { key: 'interview', label: 'Interview Prep', endpoint: '/ai/interview-prep', statuses: ['applied', 'interviewing'] },
-  { key: 'cover', label: 'Cover Letter', endpoint: '/ai/cover-letter', statuses: ['applied', 'interviewing', 'offer'] },
 ]
 
 function getTabsForStatus(status) {
   return ALL_AI_TABS.filter((t) => t.statuses.includes(status))
+}
+
+const REJECTED_QUOTES = [
+  { quote: "Every no gets you closer to your yes. Keep going.", emoji: "🌊" },
+  { quote: "Rejection is redirection. Something better is waiting.", emoji: "🧭" },
+  { quote: "The right company hasn't met you yet. Their loss, truly.", emoji: "💎" },
+  { quote: "There are plenty more fish in the sea — and some of them are offering stock options.", emoji: "🐠" },
+  { quote: "You didn't fail. The fit was just off. Next one fits perfectly.", emoji: "🔑" },
+  { quote: "Every great career has a graveyard of rejections. You're in good company.", emoji: "🌱" },
+  { quote: "One door closes, three better ones open. Go find them.", emoji: "🚪" },
+  { quote: "Not this one. But your one? It's out there.", emoji: "⭐" },
+  { quote: "Resilience isn't built in comfort. You're building yours right now.", emoji: "💪" },
+  { quote: "They said no. The right employer will say yes without hesitation.", emoji: "🎯" },
+]
+
+const OFFER_QUOTES = [
+  { quote: "You did it. They saw exactly what we always knew was there.", emoji: "🎉" },
+  { quote: "All those applications, all that effort — this is what it was all for.", emoji: "🏆" },
+  { quote: "They didn't just offer you a job. They chose YOU.", emoji: "✨" },
+  { quote: "Negotiate that salary. You've earned every penny of it.", emoji: "💰" },
+  { quote: "Someone out there is about to be very lucky to work with you.", emoji: "🌟" },
+  { quote: "The grind was real. The reward is realer.", emoji: "🥂" },
+  { quote: "You turned applications into an offer. That's not luck, that's you.", emoji: "🎊" },
+  { quote: "Go celebrate. You deserve every second of this moment.", emoji: "🚀" },
+  { quote: "This is your moment. Breathe it in.", emoji: "🌅" },
+  { quote: "New chapter, new opportunity, same incredible you.", emoji: "📖" },
+]
+
+function pickQuote(jobId, quotes) {
+  const seed = (jobId || '').split('').reduce((a, c) => a + c.charCodeAt(0), 0)
+  return quotes[seed % quotes.length]
 }
 
 export default function JobDetail() {
@@ -306,9 +336,44 @@ export default function JobDetail() {
           </div>
         </div>
 
-        {/* ── Right panel: AI assistant (hidden for rejected) ─── */}
-        {job.status !== 'rejected' && (
-          <div className="w-full lg:w-96 lg:flex-shrink-0">
+        {/* ── Right panel ─────────────────────────────────────── */}
+        <div className="w-full lg:w-96 lg:flex-shrink-0">
+
+          {/* Rejected — motivational quote */}
+          {job.status === 'rejected' && (() => {
+            const { quote, emoji } = pickQuote(job.id, REJECTED_QUOTES)
+            return (
+              <div className="bg-gradient-to-br from-orange-50 to-red-50 border border-orange-200 rounded-xl p-6 sticky top-6 text-center shadow-sm">
+                <div className="text-6xl mb-4 animate-bounce">{emoji}</div>
+                <h3 className="font-bold text-orange-800 text-lg mb-3">It's okay.</h3>
+                <p className="text-orange-700 text-sm leading-relaxed italic">"{quote}"</p>
+                <div className="mt-5 pt-4 border-t border-orange-200">
+                  <p className="text-xs text-orange-500">
+                    Keep applying · Every rejection is data · You've got this
+                  </p>
+                </div>
+              </div>
+            )
+          })()}
+
+          {/* Offer — celebration */}
+          {job.status === 'offer' && (() => {
+            const { quote, emoji } = pickQuote(job.id, OFFER_QUOTES)
+            return (
+              <div className="bg-gradient-to-br from-green-50 to-emerald-50 border border-green-200 rounded-xl p-6 sticky top-6 text-center shadow-sm">
+                <div className="text-6xl mb-4">{emoji}</div>
+                <h3 className="font-bold text-green-800 text-xl mb-3">You got the offer! 🎊</h3>
+                <p className="text-green-700 text-sm leading-relaxed italic">"{quote}"</p>
+                <div className="mt-5 pt-4 border-t border-green-200 space-y-1">
+                  <p className="text-xs text-green-600 font-medium">Next steps:</p>
+                  <p className="text-xs text-green-500">Review the offer · Negotiate salary · Celebrate!</p>
+                </div>
+              </div>
+            )
+          })()}
+
+          {/* Applied / Interviewing — AI assistant */}
+          {(job.status === 'applied' || job.status === 'interviewing') && (
             <div className="bg-white rounded-xl border border-gray-200 shadow-sm sticky top-6">
               <div className="p-5 border-b border-gray-100">
                 <h3 className="font-semibold text-gray-800">AI Assistant</h3>
@@ -319,7 +384,6 @@ export default function JobDetail() {
                 )}
               </div>
 
-              {/* Tabs */}
               <div className="flex border-b border-gray-100">
                 {getTabsForStatus(job.status).map((tab) => (
                   <button
@@ -336,7 +400,6 @@ export default function JobDetail() {
                 ))}
               </div>
 
-              {/* AI content */}
               <div className="p-5 min-h-[300px]">
                 {!job.job_description ? (
                   <p className="text-sm text-gray-400 text-center pt-12">
@@ -361,8 +424,8 @@ export default function JobDetail() {
                 )}
               </div>
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </div>
     </div>
   )

@@ -7,3 +7,10 @@ dist/
 .venv/
 *.egg-info/
 .env
+token.json
+credentials.json
+.processed_emails.json
+profile.json
+backups/
+cf-output.txt
+resumes/

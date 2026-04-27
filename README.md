@@ -23,7 +23,11 @@ the app works, why each decision was made, and what happens when you click any b
 13. [Email Notifications Explained](#13-email-notifications-explained)
 14. [Security — How Login Really Works](#14-security--how-login-really-works)
 15. [Sharing the App — Cloudflare Tunnel](#15-sharing-the-app--cloudflare-tunnel)
-16. [Tech Stack Summary](#16-tech-stack-summary)
+16. [UI/UX Features — How They Work](#16-uiux-features--how-they-work)
+17. [Tech Stack Summary](#17-tech-stack-summary)
+18. [Board-Level Resume Analyzer — How It Works](#18-board-level-resume-analyzer--how-it-works)
+19. [Job Suggestion Three-State Tracking](#19-job-suggestion-three-state-tracking)
+20. [Fortune 500 Job Suggestions — How It Works](#20-fortune-500-job-suggestions--how-it-works)
 
 ---
 
@@ -35,14 +39,32 @@ Think of it like a Kanban board (similar to Trello) but specifically for job hun
 **Core features:**
 - Track job applications across 4 stages: Applied → Interviewing → Offer → Rejected
 - Drag-and-drop cards between columns
-- AI-generated interview prep and cover letters per job
-- Follow-up reminders when applications go stale
-- Daily email with new job openings matching your profile
+- AI-generated interview prep per job (filtered by status — no AI shown for rejected)
+- Motivational quotes panel for rejected jobs; celebration panel for offers
+- Follow-up reminders when applications go stale (based on `applied_date`)
+- Daily email with job openings from Fortune 500 companies matching your profile
 - Resume board — separate Kanban per resume/job-type
 - Admin panel for the owner to see all users and their activity
-- CSV export of all applications
-- ATS (Applicant Tracking System) keyword match score
-- Analytics charts showing your application pipeline
+- CSV export AND import (with drag-and-drop column mapping)
+- ATS keyword match score per resume board — paste JD, get score instantly
+- Resume suggestions — specific bullet points to add to boost your match score
+- Go / No-Go verdict per job — 🚀 Go for it / 🤔 Could work / 🙅 Skip this one
+- Analytics charts with time-frame filter (7d / 30d / 90d / 6mo / 1yr / All)
+- GitHub-style activity heatmap (52 weeks of application history)
+- Kanban filter bar (location text, salary slider, date range buttons)
+- Floating ⚡ quick-add button on every page
+- Application streak badge (consecutive days applied)
+- Weekly goal ring (set a target, watch the SVG ring fill up)
+- Milestone confetti at 5, 10, 25, 50, 100 applications
+- Dark mode toggle (neon green + purple, stars background, scanlines)
+- Light mode: lavender gradient background, violet/purple primary color
+- Mobile-responsive with hamburger navbar
+- Fortune 500 job suggestions — US only, level-aware keyword matching
+- Three-state job tracking: New / Passed 👋 / Applied ✓
+- "Did you apply?" prompt when returning from a job page
+- Resume board editor — rename board and update keywords inline
+- Gmail sync script — auto-imports applications from labeled emails
+- Per-board resume PDF — upload once, analyze any JD instantly
 
 **What makes it technically interesting:**
 It is built as a **microservices architecture** — instead of one big program, there are
@@ -1290,7 +1312,137 @@ different filename, so the browser always fetches the right version.
 
 ---
 
-## 16. Tech Stack Summary
+## 16. UI/UX Features — How They Work
+
+### 16.1 Dark Mode / Light Mode Toggle
+
+The toggle button in the navbar switches between themes. Here is how it works technically:
+
+**Storage:** The chosen theme (`"dark"` or `"light"`) is saved in `localStorage` under the key `theme`. On every page load, the `useDarkMode` hook reads this value and applies (or removes) the `dark` CSS class on `<html>` before React renders anything. This prevents a flash of the wrong theme.
+
+**CSS strategy:** Tailwind is configured with `darkMode: 'class'`. When `<html class="dark">`, CSS overrides in `index.css` (which are unlayered and therefore higher priority than Tailwind's `@layer utilities`) change every `bg-white`, `text-gray-900`, etc. to dark equivalents. No need to add `dark:` to every JSX element.
+
+**Light mode (default):** Lavender-to-white gradient background (`linear-gradient(135deg, #faf5ff, #fff, #fff7ed)`), frosted glass navbar (`backdrop-filter: blur`), all blue Tailwind classes overridden to violet/purple (`#7c3aed`), purple card shadows.
+
+**Dark mode:** Deep navy background (`#070711`), neon green (`#00ff88`) and purple (`#a855f7`) accents, animated star particles (CSS `radial-gradient` pseudo-element with keyframe animation), subtle scanline overlay (repeating linear gradient at 4px intervals), neon glow on interactive elements.
+
+**Neon glow:** Achieved with CSS `box-shadow` and `text-shadow` properties. Cards use `box-shadow: 0 0 20px rgba(0,255,136,0.15)` on hover.
+
+---
+
+### 16.2 GitHub-Style Heatmap
+
+Located on the Analytics page. Shows application activity for the last 52 weeks.
+
+**How it's built:**
+- Generates a 52×7 grid of days (364 cells total)
+- Groups jobs by `applied_date` into a `{ "2026-04-23": 3 }` map
+- Each cell's color intensity represents count: 0 = gray, 1–4 = increasing purple (light) or green (dark)
+- Month labels are positioned by tracking when the month changes across weeks
+- Hover tooltip is a fixed-position div that follows mouse coordinates
+- Colors use inline styles (not Tailwind classes) so they work in both themes without extra configuration
+
+---
+
+### 16.3 Weekly Goal Ring
+
+An SVG circle progress indicator on the Dashboard.
+
+**How SVG circles work for progress:**
+- A `<circle>` element with `stroke-dasharray` controls how much of the circle is drawn
+- `stroke-dasharray="X Y"` means: draw X pixels of stroke, then skip Y pixels
+- The full circumference = `2 × π × radius` (here: `2 × 3.14159 × 36 ≈ 226px`)
+- Setting `stroke-dasharray="${progress * circumference} ${circumference}"` draws only the progress portion
+- `transform="rotate(-90 44 44)"` rotates the start point to the top (12 o'clock position)
+- CSS `transition: stroke-dasharray 0.7s ease` makes it animate smoothly
+
+The goal is stored in `localStorage` under `weekly_goal`. Current week's applications are counted by filtering jobs where `applied_date >= Monday of this week`.
+
+---
+
+### 16.4 Application Streak
+
+Counts consecutive days (going back from today or yesterday) where at least one job was applied.
+
+**Algorithm:**
+```
+1. Build a Set of all applied_date strings
+2. Start from today. If today has no applications, try yesterday.
+3. If neither has applications → streak = 0
+4. Walk backwards day by day, incrementing streak, until a day with no applications
+```
+
+Displayed with emoji feedback: 🌱 (0–2 days), ⚡ (3–6 days), 🔥 (7+ days).
+
+---
+
+### 16.5 Milestone Confetti
+
+Checks after every job fetch or quick-add whether a milestone (5, 10, 25, 50, 100) has been crossed for the first time. Triggered milestones are stored in `localStorage` under `milestones_done` so they never fire twice.
+
+**Confetti implementation (no library):**
+- Creates N div elements with fixed positioning, random colors, sizes, positions
+- Each div has CSS animation: `confettiFall` (vertical fall with opacity fade) + `confettiSway` (horizontal oscillation)
+- `--fall-dur`, `--sway-dur`, `--fall-delay` CSS custom properties set per-element via inline style
+- Elements are appended to `document.body` and removed after the animation completes via `setTimeout`
+
+---
+
+### 16.6 Floating Quick-Add Button
+
+Fixed-position `+` button at bottom-right of every page. Opens a minimal 4-field form (company, role, status, applied date).
+
+**Cross-page communication:**
+When the user is already on `/dashboard`, after a successful quick-add the component fires a custom browser event:
+```javascript
+window.dispatchEvent(new CustomEvent('job-quick-added', { detail: newJob }))
+```
+Dashboard listens for this event in a `useEffect` and prepends the new job to its local state — no API refetch needed.
+
+If the user is on a different page (e.g., job detail), the component navigates to `/dashboard` after adding.
+
+---
+
+### 16.7 CSV Import with Column Mapping
+
+**Flow:**
+1. User uploads any CSV file — no renaming required
+2. `FileReader` reads the file, splits the first line to extract column headers
+3. Auto-mapping: for each app field, looks for a CSV header that fuzzy-matches the field name
+4. User sees a mapping UI and can correct any mismatches
+5. On import, the CSV + JSON mapping string are sent as `multipart/form-data` to `POST /jobs/import-csv?mapping=...`
+6. The job-service backend uses Python's `csv.DictReader` to parse rows, applies the mapping, and creates Job records
+
+**Handled automatically:**
+- UTF-8 and Latin-1 encodings
+- BOM (Byte Order Mark) in Excel-generated CSVs (`utf-8-sig` encoding)
+- Date formats: `YYYY-MM-DD`, `MM/DD/YYYY`, `DD/MM/YYYY`
+- Salary formats: `$90,000`, `90k`, `90000`
+
+---
+
+### 16.8 AI Tab Logic by Job Status
+
+The AI assistant right panel changes based on job status:
+
+| Status | Right Panel |
+|--------|-------------|
+| Applied | Interview Prep tab |
+| Interviewing | Interview Prep tab |
+| Offer | Celebration panel with unique quote |
+| Rejected | Motivational panel with unique quote |
+
+Quotes are selected **deterministically** — the same job always shows the same quote. Algorithm: sum all character codes in the job's UUID, take modulo of the quotes array length. This means no random flickering on re-renders.
+
+---
+
+### 16.9 Animated Stat Counters
+
+The 4 KPI cards on Dashboard animate their numbers from 0 (or previous value) to the new value using `requestAnimationFrame`. Uses an **ease-out cubic** easing function: `1 - (1 - progress)^3` which starts fast and decelerates — feels natural.
+
+---
+
+## 17. Tech Stack Summary
 
 | Component | Technology | Why This Choice |
 |-----------|-----------|-----------------|
@@ -1344,6 +1496,140 @@ DEMO_PASSWORD=JobTracker2026        ← Password for demo@jobtracker.com
 
 These values are injected into containers as environment variables and read using
 `os.getenv("VARIABLE_NAME")` in Python or `import.meta.env.VITE_*` in Vite.
+
+---
+
+---
+
+## 18. Board-Level Resume Analyzer — How It Works
+
+Each resume board has its own PDF stored in browser `localStorage` under `board_resume_{board_id}`. When you upload a PDF during board creation (or later via the "Upload Resume PDF" button), the PDF is sent to `POST /ai/extract-resume-text` which uses `pypdf` to extract plain text — no AI involved, just text extraction. The text is stored in localStorage so it persists across sessions without hitting the server again.
+
+**When you analyze a job:**
+1. Paste the job description into the board's "Analyze Job Match" panel
+2. Stored resume text + JD sent to `POST /ai/ats-score`
+3. Groq returns a JSON with:
+   - `score` — 0–100 ATS match percentage
+   - `matched_keywords` / `missing_keywords` — up to 10 each
+   - `suggestions` — up to 6 specific bullet points/phrases to ADD to your resume
+   - `verdict` — `"go"` / `"maybe"` / `"skip"`
+   - `verdict_reason` — one punchy sentence explaining the verdict
+
+**Verdict thresholds:**
+- 🚀 **Go** — score ≥ 60 and candidate has core required skills
+- 🤔 **Maybe** — score 35–59 or missing 1–2 key requirements
+- 🙅 **Skip** — score < 35 or fundamentally wrong role/level
+
+**Why store resume text in localStorage instead of the database?**
+The resume text can be 3–5KB. Storing it in the DB would require a schema change and migration. localStorage is instant, persists between sessions on the same browser, and doesn't add server load for a personal-use feature.
+
+---
+
+## 19. Job Suggestion Three-State Tracking
+
+Job suggestions have three states, stored in browser localStorage:
+
+| State | Key | localStorage key |
+|-------|-----|-----------------|
+| New | — | not in either set |
+| Passed 👋 | URL | `passed_suggestions` |
+| Applied ✓ | URL | `applied_suggestions` |
+
+**Flow:**
+1. Click "View →" → URL stored in `pending_application_check`, job opens in new tab
+2. Return to app tab → `visibilitychange` event fires → prompt appears
+3. Three choices:
+   - **Let it go 👋** → URL added to `passed_suggestions`, shown greyed out with "Passed 👋"
+   - **Not yet** → prompt dismissed, job stays as "New"
+   - **Yes, I applied! 🎉** → job created via API with `resume_id`, URL added to `applied_suggestions`, confetti fires
+
+**Ordering in the table:** New → Passed → Applied (so fresh opportunities always show first)
+
+**Why localStorage instead of the database?**
+These are ephemeral UI states — whether you viewed a listing is not worth persisting to a backend. localStorage is zero-latency and the data is meaningful only on your own device.
+
+---
+
+## 20. Fortune 500 Job Suggestions — How It Works
+
+### Why No Third-Party Job API?
+
+The app queries Fortune 500 company career pages directly through their ATS (Applicant Tracking System) public APIs. No Adzuna, no Indeed, no LinkedIn — just the companies' own endpoints.
+
+### What is an ATS?
+
+An ATS (Applicant Tracking System) is the software companies use to manage job postings and applications. Most Fortune 500 companies use one of three platforms, each of which exposes a **public REST API** (the same API their own career page uses in the browser):
+
+**Greenhouse** — `boards-api.greenhouse.io/v1/boards/{company}/jobs`
+No authentication required. Returns all open positions as JSON. Companies like Airbnb, Stripe, Coinbase, Reddit, Figma, Notion, Cloudflare, OpenAI, Anthropic use this.
+
+**Lever** — `api.lever.co/v0/postings/{company}?mode=json`
+No authentication required. Returns all open postings. Netflix, Lyft, Box, Twitch, Snap use this.
+
+**Workday** — `{company}.wd{n}.myworkdayjobs.com/wday/cxs/{company}/{path}/jobs`
+Accepts a POST with a `searchText` field. Returns matching job postings. Microsoft, Salesforce, Nike, Adobe, Walmart, Target, IBM use this.
+
+### How the Scraper Works (`services/ai-service/fortune500.py`)
+
+```
+user visits resume board with keywords "python engineer"
+    │
+    ▼
+GET /ai/job-suggestions?keywords=python+engineer
+    │
+    ├── Check Redis cache (6-hour TTL)
+    │   └── Cache hit → return immediately
+    │
+    └── Cache miss:
+          │
+          ├── Build keyword list: ["python", "engineer"]
+          │
+          ├── asyncio.gather() — ALL companies queried simultaneously
+          │   ├── Greenhouse companies (39 companies, parallel HTTP GETs)
+          │   ├── Lever companies (8 companies, parallel HTTP GETs)
+          │   └── Workday companies (7 companies, parallel HTTP POSTs)
+          │
+          ├── Each fetch function:
+          │   1. Calls the company's ATS API
+          │   2. Filters: only keeps jobs where title contains a keyword
+          │   3. Returns [] on any error (never breaks the whole request)
+          │
+          ├── Combines all results, shuffles (mixes companies)
+          │
+          ├── Returns first 15 results
+          │
+          └── Caches in Redis for 6 hours
+```
+
+### Why asyncio.gather()?
+
+Without concurrency, querying 54 companies sequentially would take 54 × ~300ms = ~16 seconds. With `asyncio.gather()`, all 54 requests fire simultaneously and the total wait is bounded by the **slowest single company** (~3–5 seconds). This is the key advantage of Python's async/await model for I/O-bound tasks.
+
+### Keyword Matching
+
+Each fetch function filters results so only relevant jobs appear:
+```python
+def _matches(title: str, keywords: List[str]) -> bool:
+    t = title.lower()
+    return any(kw in t for kw in keywords)
+```
+
+If a resume board has keywords `"React frontend engineer"`, the keywords list becomes `["react", "frontend", "engineer"]`. A job titled "Senior React Developer" matches because "react" appears in the title.
+
+### Company Registry
+
+The `COMPANIES` list in `fortune500.py` contains 54 entries across 3 ATS types. To add a new company, just add one line:
+```python
+{"name": "NewCo", "ats": "greenhouse", "board": "newco"},
+```
+
+### Cache Strategy
+
+Results are cached for **6 hours** (not 1 hour like AI responses, not 1 day like the old Adzuna cache). Fortune 500 job postings don't change minute-to-minute, but caching for a full day would miss new postings. 6 hours is the sweet spot.
+
+### Daily Email Integration
+
+The notification service's `send_job_suggestions()` function calls the ai-service's `/ai/job-suggestions` endpoint (internal HTTP call). This means the same Fortune 500 scraper powers both the in-app suggestions AND the daily email — one code path, consistent results.
 
 ---
 

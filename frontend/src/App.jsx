@@ -8,12 +8,13 @@ import Dashboard from './pages/Dashboard'
 import JobDetail from './pages/JobDetail'
 import Charts from './pages/Charts'
 import Admin from './pages/Admin'
+import FloatingAddButton from './components/FloatingAddButton'
 
 export default function App() {
   return (
     <AuthProvider>
       <BrowserRouter>
-        <div className="min-h-screen bg-gray-50">
+        <div className="min-h-screen bg-gray-50 dark:bg-[#070711]">
           <Routes>
             {/* Public */}
             <Route path="/login" element={<Login />} />
@@ -42,6 +43,7 @@ export default function App() {
                     <main className="max-w-7xl mx-auto px-4 py-6">
                       <Dashboard />
                     </main>
+                    <FloatingAddButton />
                   </>
                 </ProtectedRoute>
               }
@@ -51,6 +53,7 @@ export default function App() {
               element={
                 <ProtectedRoute>
                   <>
+                    <FloatingAddButton />
                     <Navbar />
                     <main className="max-w-7xl mx-auto px-4 py-6">
                       <JobDetail />

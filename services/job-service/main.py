@@ -12,7 +12,8 @@ from contextlib import asynccontextmanager
 
 import httpx
 from aiokafka import AIOKafkaProducer
-from fastapi import FastAPI, Depends, HTTPException, status, Header, Query
+from fastapi import FastAPI, Depends, HTTPException, status, Header, Query, UploadFile, File
+import csv, io
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import Column, String, DateTime, Date, Integer, Text, text, func
 from sqlalchemy.dialects.postgresql import UUID
@@ -236,6 +237,26 @@ async def list_resumes(
     )
 
 
+@app.patch("/resumes/{resume_id}", response_model=ResumeResponse)
+async def update_resume(
+    resume_id: uuid.UUID,
+    data: ResumeCreate,
+    user_info: dict = Depends(get_current_user_info),
+    db: Session = Depends(get_db),
+):
+    resume = db.query(Resume).filter(
+        Resume.id == resume_id,
+        Resume.user_id == uuid.UUID(user_info["user_id"]),
+    ).first()
+    if not resume:
+        raise HTTPException(404, "Resume not found")
+    resume.name     = data.name
+    resume.keywords = data.keywords
+    db.commit()
+    db.refresh(resume)
+    return resume
+
+
 @app.delete("/resumes/{resume_id}", status_code=204)
 async def delete_resume(
     resume_id: uuid.UUID,
@@ -351,6 +372,85 @@ async def admin_job_stats(
             stats[uid]["last_activity"] = row.last_at.isoformat() if row.last_at else None
 
     return stats
+
+
+@app.post("/jobs/import-csv")
+async def import_csv(
+    file: UploadFile = File(...),
+    mapping: str = Query(..., description="JSON string mapping app fields to CSV columns"),
+    user_info: dict = Depends(get_current_user_info),
+    db: Session = Depends(get_db),
+):
+    """
+    Import jobs from a CSV file using a column mapping.
+    mapping is a JSON object like:
+    {"company": "Company Name", "role": "Job Title", "status": "Stage", ...}
+    """
+    try:
+        col_map = json.loads(mapping)
+    except Exception:
+        raise HTTPException(400, "Invalid mapping JSON")
+
+    content = await file.read()
+    try:
+        text_content = content.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        text_content = content.decode("latin-1")
+
+    reader = csv.DictReader(io.StringIO(text_content))
+    rows = list(reader)
+    if not rows:
+        raise HTTPException(400, "CSV file is empty")
+
+    created, skipped = 0, 0
+    for row in rows:
+        def get(field):
+            csv_col = col_map.get(field, "")
+            return row.get(csv_col, "").strip() if csv_col else ""
+
+        company = get("company")
+        role    = get("role")
+        if not company or not role:
+            skipped += 1
+            continue
+
+        raw_status = get("status").lower()
+        status_val = raw_status if raw_status in VALID_STATUSES else "applied"
+
+        def parse_date(val):
+            if not val:
+                return None
+            for fmt in ("%Y-%m-%d", "%m/%d/%Y", "%d/%m/%Y", "%m-%d-%Y"):
+                try:
+                    return datetime.strptime(val, fmt).date()
+                except ValueError:
+                    pass
+            return None
+
+        def parse_int(val):
+            try:
+                return int(float(val.replace(",", "").replace("$", "").replace("k", "000")))
+            except Exception:
+                return None
+
+        job = Job(
+            user_id      = uuid.UUID(user_info["user_id"]),
+            company      = company,
+            role         = role,
+            status       = status_val,
+            notes        = get("notes"),
+            location     = get("location"),
+            applied_date = parse_date(get("applied_date")),
+            deadline     = parse_date(get("deadline")),
+            salary_min   = parse_int(get("salary_min")),
+            salary_max   = parse_int(get("salary_max")),
+            job_description = get("job_description") or None,
+        )
+        db.add(job)
+        created += 1
+
+    db.commit()
+    return {"imported": created, "skipped": skipped, "total_rows": len(rows)}
 
 
 @app.post("/jobs/{job_id}/mark-followed-up", response_model=JobResponse)

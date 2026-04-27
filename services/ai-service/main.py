@@ -24,10 +24,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
-REDIS_URL = os.getenv("REDIS_URL", "redis://redis:6379")
-ADZUNA_APP_ID = os.getenv("ADZUNA_APP_ID", "")
-ADZUNA_APP_KEY = os.getenv("ADZUNA_APP_KEY", "")
-CACHE_TTL = 3600  # 1 hour in seconds
+REDIS_URL    = os.getenv("REDIS_URL", "redis://redis:6379")
+CACHE_TTL    = 3600  # 1 hour in seconds
 
 # llama-3.3-70b-versatile — best free model on Groq for structured JSON output
 MODEL = "llama-3.3-70b-versatile"
@@ -257,6 +255,25 @@ Respond ONLY with a valid JSON object — no markdown, no explanation:
         raise HTTPException(status_code=502, detail=f"AI API error: {str(e)}")
 
 
+# ── Resume Text Extraction (no AI, just PDF → text) ──────────
+
+@app.post("/ai/extract-resume-text")
+async def extract_resume_text(file: UploadFile = File(...)):
+    """Extract plain text from a PDF resume — no AI involved."""
+    content = await file.read()
+    if not content:
+        raise HTTPException(400, "Empty file")
+    try:
+        text = extract_text_from_pdf(content)
+        if not text.strip():
+            raise HTTPException(400, "Could not extract text from PDF — try a different file")
+        return {"text": text}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(500, f"PDF extraction failed: {e}")
+
+
 # ── Resume Analysis ───────────────────────────────────────────
 
 class ResumeAnalysisResponse(BaseModel):
@@ -371,6 +388,9 @@ class ATSScoreResponse(BaseModel):
     score: int
     matched_keywords: List[str]
     missing_keywords: List[str]
+    suggestions: List[str]
+    verdict: str        # "go" | "maybe" | "skip"
+    verdict_reason: str
     cached: bool = False
 
 
@@ -379,12 +399,12 @@ async def ats_score(req: ATSScoreRequest):
     if len(req.resume_text.strip()) < 50:
         raise HTTPException(400, "Resume text is too short — paste your full resume.")
 
-    cache_key = make_cache_key("ats-score", req.job_description, req.resume_text)
+    cache_key = make_cache_key("ats-score-v2", req.job_description, req.resume_text)
     if cached := await get_cached(cache_key):
         return ATSScoreResponse(**cached, cached=True)
 
-    prompt = f"""You are an expert ATS (Applicant Tracking System) analyzer.
-Score how well this resume matches the job description.
+    prompt = f"""You are an expert ATS analyzer and career coach.
+Evaluate this resume against the job description honestly and helpfully.
 
 JOB DESCRIPTION:
 {req.job_description}
@@ -394,18 +414,33 @@ RESUME:
 
 Respond ONLY with a valid JSON object — no markdown, no explanation:
 {{
-  "score": <integer 0-100, how well the resume matches>,
-  "matched_keywords": ["up to 10 skills/keywords present in both resume and JD"],
-  "missing_keywords": ["up to 10 important skills/keywords from JD that are missing in the resume"]
-}}"""
+  "score": <integer 0-100, ATS match score>,
+  "matched_keywords": ["up to 10 skills/keywords present in both"],
+  "missing_keywords": ["up to 10 important keywords from JD missing in resume"],
+  "suggestions": [
+    "Specific sentence or bullet point to ADD to the resume to improve match — e.g. 'Add: Developed REST APIs using FastAPI and deployed to AWS Lambda'",
+    "Another specific addition — e.g. 'Add React and TypeScript to your skills section'",
+    "Another — up to 6 specific, actionable additions total"
+  ],
+  "verdict": "<go|maybe|skip>",
+  "verdict_reason": "<one punchy sentence explaining the verdict — be honest but encouraging>"
+}}
+
+Verdict guide:
+- go: score >= 60 and candidate has the core required skills
+- maybe: score 35-59 or missing 1-2 key requirements but transferable skills exist
+- skip: score < 35 or fundamentally wrong role/level for this candidate"""
 
     try:
-        text = call_claude(prompt)
+        text = call_claude(prompt, max_tokens=1500)
         data = parse_json_response(text)
         result = {
-            "score": int(data["score"]),
+            "score":           int(data["score"]),
             "matched_keywords": data.get("matched_keywords", [])[:10],
             "missing_keywords": data.get("missing_keywords", [])[:10],
+            "suggestions":      data.get("suggestions", [])[:6],
+            "verdict":          data.get("verdict", "maybe"),
+            "verdict_reason":   data.get("verdict_reason", ""),
         }
         await set_cached(cache_key, result)
         return ATSScoreResponse(**result)
@@ -415,92 +450,54 @@ Respond ONLY with a valid JSON object — no markdown, no explanation:
         raise HTTPException(502, f"AI API error: {str(e)}")
 
 
-# ── Job Suggestions ───────────────────────────────────────────
+# ── Job Suggestions (Fortune 500 ATS) ────────────────────────
+
+from fortune500 import search_fortune500
 
 @app.get("/ai/job-suggestions")
 async def job_suggestions(
-    keywords: str = Query(..., description="Search terms derived from resume, e.g. 'React frontend engineer'"),
-    country: str = Query("us"),
+    keywords: str = Query(..., description="Search terms, e.g. 'Python backend engineer'"),
+    limit: int = Query(15, ge=5, le=100, description="Max results to return"),
 ):
     """
-    Returns up to 15 job openings posted today matching the given keywords.
-    Uses Adzuna API if configured (ADZUNA_APP_ID + ADZUNA_APP_KEY env vars),
-    otherwise falls back to Remotive (free, no key, remote jobs only).
-    Results are cached in Redis for the rest of the calendar day.
+    Returns US job openings from Fortune 500 companies matching the keywords.
+    Queries Greenhouse, Lever, and Workday ATS APIs concurrently.
+    Cache resets daily at midnight UTC so results are always fresh each day.
     """
+    if not keywords.strip():
+        return {"jobs": [], "cached": False, "source": "fortune500"}
+
     today = date.today().isoformat()
-    cache_key = f"suggestions:{country}:{hashlib.sha256(f'{keywords}:{today}'.encode()).hexdigest()}"
+    cache_key = f"f500:{today}:{hashlib.sha256(keywords.strip().lower().encode()).hexdigest()}"
 
     if cached := await get_cached(cache_key):
-        return {"jobs": cached["jobs"], "cached": True, "source": cached.get("source", "cache")}
+        all_jobs = cached["jobs"]
+        return {"jobs": all_jobs[:limit], "cached": True, "source": "fortune500"}
 
-    jobs = []
-    source = "none"
+    # Fetch up to 100 so we can serve any limit from the cache
+    raw = await search_fortune500(keywords, max_results=100)
 
-    # Build a set of meaningful search terms (words with 3+ chars) for relevance filtering
-    search_words = {w.lower() for w in keywords.replace(',', ' ').split() if len(w) >= 3}
+    jobs = [
+        {
+            "title":        j["title"],
+            "company":      j["company"],
+            "location":     j.get("location", ""),
+            "redirect_url": j.get("url", ""),
+            "salary_min":   None,
+            "salary_max":   None,
+        }
+        for j in raw
+    ]
 
-    def is_relevant(title: str) -> bool:
-        """Return True only if the job title contains at least one search keyword."""
-        title_lower = title.lower()
-        return any(word in title_lower for word in search_words)
+    result = {"jobs": jobs, "source": "fortune500"}
 
-    if ADZUNA_APP_ID and ADZUNA_APP_KEY:
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(
-                    f"https://api.adzuna.com/v1/api/jobs/{country}/search/1",
-                    params={
-                        "app_id": ADZUNA_APP_ID,
-                        "app_key": ADZUNA_APP_KEY,
-                        "results_per_page": 15,
-                        "what": keywords,
-                        "max_days_old": 1,
-                        "sort_by": "date",
-                    },
-                )
-                data = resp.json()
-            jobs = [
-                {
-                    "title": r.get("title", ""),
-                    "company": r.get("company", {}).get("display_name", ""),
-                    "location": r.get("location", {}).get("display_name", ""),
-                    "redirect_url": r.get("redirect_url", ""),
-                    "salary_min": r.get("salary_min"),
-                    "salary_max": r.get("salary_max"),
-                }
-                for r in data.get("results", [])
-                if is_relevant(r.get("title", ""))
-            ]
-            source = "adzuna"
-        except Exception as e:
-            print(f"[Adzuna] Error: {e}")
+    # Cache until midnight UTC
+    import json as _json
+    from datetime import datetime, timedelta
+    now = datetime.utcnow()
+    midnight = datetime(now.year, now.month, now.day) + timedelta(days=1)
+    ttl = max(60, int((midnight - now).total_seconds()))
+    if redis_client:
+        await redis_client.setex(cache_key, ttl, _json.dumps(result))
 
-    # Fallback: Remotive (free, no auth, remote jobs)
-    if not jobs:
-        try:
-            async with httpx.AsyncClient(timeout=10.0) as client:
-                resp = await client.get(
-                    "https://remotive.com/api/remote-jobs",
-                    params={"search": keywords, "limit": 15},
-                )
-                data = resp.json()
-            jobs = [
-                {
-                    "title": r.get("title", ""),
-                    "company": r.get("company_name", ""),
-                    "location": r.get("candidate_required_location", "Remote"),
-                    "redirect_url": r.get("url", ""),
-                    "salary_min": None,
-                    "salary_max": None,
-                }
-                for r in data.get("jobs", [])[:15]
-                if is_relevant(r.get("title", ""))
-            ]
-            source = "remotive"
-        except Exception as e:
-            print(f"[Remotive] Error: {e}")
-
-    result = {"jobs": jobs, "source": source}
-    await set_cached(cache_key, result)
-    return {"jobs": jobs, "cached": False, "source": source}
+    return {"jobs": jobs[:limit], "cached": False, "source": "fortune500"}

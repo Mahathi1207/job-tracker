@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { Link, useLocation, useNavigate } from 'react-router-dom'
 import { useAuth } from '../contexts/AuthContext'
+import { useDarkMode } from '../hooks/useDarkMode'
 
 const ADMIN_EMAIL = 'demo@jobtracker.com'
 
@@ -9,6 +10,7 @@ export default function Navbar() {
   const location = useLocation()
   const navigate = useNavigate()
   const [menuOpen, setMenuOpen] = useState(false)
+  const [dark, setDark] = useDarkMode()
 
   const navLinks = [
     { to: '/dashboard', label: 'Dashboard' },
@@ -25,7 +27,7 @@ export default function Navbar() {
     <nav className="bg-white border-b border-gray-200 shadow-sm">
       <div className="max-w-7xl mx-auto px-4 flex items-center justify-between h-16">
         {/* Logo */}
-        <Link to="/dashboard" className="flex items-center gap-2 font-bold text-blue-600 text-lg">
+        <Link to="/dashboard" className="neon-logo flex items-center gap-2 font-bold text-blue-600 text-lg">
           <span className="text-2xl">📋</span>
           <span>JobTracker</span>
         </Link>
@@ -46,6 +48,15 @@ export default function Navbar() {
             </Link>
           ))}
         </div>
+
+        {/* Dark mode toggle */}
+        <button
+          onClick={() => setDark(!dark)}
+          className={`theme-toggle hidden sm:block ${dark ? 'dark-on' : ''}`}
+          aria-label="Toggle dark mode"
+        >
+          <div className="theme-toggle-thumb">{dark ? '🌙' : '☀️'}</div>
+        </button>
 
         {/* Desktop user + logout */}
         <div className="hidden sm:flex items-center gap-3">
@@ -95,6 +106,14 @@ export default function Navbar() {
               {label}
             </Link>
           ))}
+          <div className="pt-2 border-t border-gray-100 flex items-center gap-3">
+            <button
+              onClick={() => setDark(!dark)}
+              className={`theme-toggle ${dark ? 'dark-on' : ''}`}
+            >
+              <div className="theme-toggle-thumb">{dark ? '🌙' : '☀️'}</div>
+            </button>
+          </div>
           <div className="pt-2 border-t border-gray-100 flex items-center justify-between">
             <span className="text-sm text-gray-500 truncate max-w-[200px]">
               {user?.full_name || user?.email}

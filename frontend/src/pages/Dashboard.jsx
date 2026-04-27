@@ -1,12 +1,110 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { differenceInDays, parseISO, format } from 'date-fns'
+import { differenceInDays, parseISO, format, subDays, startOfDay } from 'date-fns'
+import { triggerConfetti } from '../utils/confetti'
+
+const MILESTONES = [5, 10, 25, 50, 100]
+
+function checkMilestones(count) {
+  const done = JSON.parse(localStorage.getItem('milestones_done') || '[]')
+  MILESTONES.forEach((m) => {
+    if (count >= m && !done.includes(m)) {
+      triggerConfetti(150)
+      done.push(m)
+      localStorage.setItem('milestones_done', JSON.stringify(done))
+      // Show a brief toast
+      const toast = document.createElement('div')
+      toast.textContent = `🎉 Milestone: ${m} applications!`
+      toast.style.cssText = `position:fixed;top:80px;left:50%;transform:translateX(-50%);
+        background:linear-gradient(135deg,#7c3aed,#a855f7);color:#fff;
+        padding:12px 24px;border-radius:999px;font-weight:600;font-size:14px;
+        z-index:9999;box-shadow:0 4px 20px rgba(124,58,237,0.4);
+        animation:countPop 0.4s ease-out;`
+      document.body.appendChild(toast)
+      setTimeout(() => toast.remove(), 3000)
+    }
+  })
+}
+
+function calcStreak(jobs) {
+  const today = startOfDay(new Date())
+  const dates = new Set(jobs.map((j) => j.applied_date).filter(Boolean))
+  let streak = 0
+  let cur = today
+  if (!dates.has(format(today, 'yyyy-MM-dd'))) cur = subDays(today, 1)
+  if (!dates.has(format(cur, 'yyyy-MM-dd'))) return 0
+  while (dates.has(format(cur, 'yyyy-MM-dd'))) {
+    streak++
+    cur = subDays(cur, 1)
+  }
+  return streak
+}
+
+function GoalRing({ applied, goal, onEdit }) {
+  const pct = goal > 0 ? Math.min(applied / goal, 1) : 0
+  const r = 36
+  const circ = 2 * Math.PI * r
+  const dash = circ * pct
+  const isDark = document.documentElement.classList.contains('dark')
+  const ringColor = isDark ? '#00ff88' : '#7c3aed'
+  const trackColor = isDark ? '#1f2937' : '#ede9fe'
+  const textColor = isDark ? '#e2e8f0' : '#1f2937'
+
+  return (
+    <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm flex items-center gap-4">
+      <svg width="88" height="88" viewBox="0 0 88 88">
+        <circle cx="44" cy="44" r={r} fill="none" stroke={trackColor} strokeWidth="7" />
+        <circle
+          cx="44" cy="44" r={r} fill="none"
+          stroke={ringColor} strokeWidth="7"
+          strokeDasharray={`${dash} ${circ}`}
+          strokeLinecap="round"
+          transform="rotate(-90 44 44)"
+          style={{ transition: 'stroke-dasharray 0.7s ease' }}
+        />
+        <text x="44" y="40" textAnchor="middle" fontSize="18" fontWeight="700" fill={textColor}>{applied}</text>
+        <text x="44" y="56" textAnchor="middle" fontSize="11" fill="#9ca3af">/ {goal}</text>
+      </svg>
+      <div>
+        <p className="text-xs text-gray-500 uppercase tracking-wide">This week</p>
+        <p className="font-semibold text-gray-800 text-sm mt-0.5">
+          {applied >= goal && goal > 0 ? '🎯 Goal reached!' : `${Math.max(0, goal - applied)} more to go`}
+        </p>
+        <button onClick={onEdit} className="text-xs text-blue-600 hover:underline mt-1">
+          Edit goal ({goal}/week)
+        </button>
+      </div>
+    </div>
+  )
+}
 import api from '../api/axios'
 import KanbanBoard from '../components/KanbanBoard'
 import ResumeAnalyzer from '../components/ResumeAnalyzer'
 import ResumeBoard from '../components/ResumeBoard'
+import CsvImport from '../components/CsvImport'
 
 const STATUSES = ['applied', 'interviewing', 'offer', 'rejected']
+
+function AnimatedNumber({ value }) {
+  const [display, setDisplay] = useState(0)
+  const prev = useRef(0)
+  useEffect(() => {
+    const start = prev.current
+    const end = typeof value === 'number' ? value : 0
+    if (start === end) return
+    const duration = 600
+    const startTime = performance.now()
+    const tick = (now) => {
+      const progress = Math.min((now - startTime) / duration, 1)
+      const eased = 1 - Math.pow(1 - progress, 3)
+      setDisplay(Math.round(start + (end - start) * eased))
+      if (progress < 1) requestAnimationFrame(tick)
+      else { setDisplay(end); prev.current = end }
+    }
+    requestAnimationFrame(tick)
+  }, [value])
+  return <span className="count-pop">{display}</span>
+}
 
 export default function Dashboard() {
   const navigate = useNavigate()
@@ -23,17 +121,33 @@ export default function Dashboard() {
   })
   const [filters, setFilters] = useState({ location: '', salary: 0, days: 0 })
   const [resumeForm, setResumeForm] = useState({ name: '', keywords: '' })
+  const [resumePdf, setResumePdf]   = useState(null)
+  const [extracting, setExtracting] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [addingResume, setAddingResume] = useState(false)
+  const [showImport, setShowImport] = useState(false)
+  const [weeklyGoal, setWeeklyGoal] = useState(() => Number(localStorage.getItem('weekly_goal') || 5))
+  const [editingGoal, setEditingGoal] = useState(false)
+  const [goalInput, setGoalInput] = useState('')
 
   useEffect(() => {
     Promise.all([fetchJobs(), fetchResumes()]).finally(() => setLoading(false))
+    const handler = (e) => {
+      setJobs((prev) => {
+        const updated = [e.detail, ...prev]
+        checkMilestones(updated.length)
+        return updated
+      })
+    }
+    window.addEventListener('job-quick-added', handler)
+    return () => window.removeEventListener('job-quick-added', handler)
   }, [])
 
   async function fetchJobs() {
     try {
       const res = await api.get('/jobs')
       setJobs(res.data)
+      checkMilestones(res.data.length)
     } catch (err) {
       console.error('Failed to fetch jobs', err)
     }
@@ -94,10 +208,30 @@ export default function Dashboard() {
         name: resumeForm.name,
         keywords: resumeForm.keywords || null,
       })
-      setResumes((prev) => [...prev, res.data])
-      setActiveTab(res.data.id)
+      const newResume = res.data
+
+      // Extract and store resume text if PDF was uploaded
+      if (resumePdf) {
+        setExtracting(true)
+        try {
+          const form = new FormData()
+          form.append('file', resumePdf)
+          const textRes = await api.post('/ai/extract-resume-text', form, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+          })
+          localStorage.setItem(`board_resume_${newResume.id}`, textRes.data.text)
+        } catch (err) {
+          console.error('PDF extraction failed', err)
+        } finally {
+          setExtracting(false)
+        }
+      }
+
+      setResumes((prev) => [...prev, newResume])
+      setActiveTab(newResume.id)
       setShowAddResume(false)
       setResumeForm({ name: '', keywords: '' })
+      setResumePdf(null)
     } catch (err) {
       console.error('Failed to add resume', err)
     } finally {
@@ -146,6 +280,14 @@ export default function Dashboard() {
     return true
   })
 
+  const streak = calcStreak(jobs)
+
+  const thisWeekStart = subDays(startOfDay(new Date()), new Date().getDay() === 0 ? 6 : new Date().getDay() - 1)
+  const thisWeekApplied = jobs.filter((j) => {
+    if (!j.applied_date) return false
+    return parseISO(j.applied_date) >= thisWeekStart
+  }).length
+
   const maxSalary = Math.max(0, ...jobs.map((j) => j.salary_max || j.salary_min || 0))
   const salarySliderMax = Math.ceil((maxSalary || 200000) / 10000) * 10000
 
@@ -179,16 +321,67 @@ export default function Dashboard() {
       {/* Stats row */}
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-6">
         {[
-          { label: 'Total Applied', value: totalApplied, color: 'text-blue-600' },
-          { label: 'Interviewing', value: totalInterviewing, color: 'text-yellow-600' },
-          { label: 'Offers', value: totalOffers, color: 'text-green-600' },
-          { label: 'Response Rate', value: `${responseRate}%`, color: 'text-purple-600' },
-        ].map(({ label, value, color }) => (
+          { label: 'Total Applied', value: totalApplied, color: 'text-blue-600', isNum: true },
+          { label: 'Interviewing', value: totalInterviewing, color: 'text-yellow-600', isNum: true },
+          { label: 'Offers', value: totalOffers, color: 'text-green-600', isNum: true },
+          { label: 'Response Rate', value: responseRate, color: 'text-purple-600', isNum: false },
+        ].map(({ label, value, color, isNum }) => (
           <div key={label} className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm">
             <p className="text-xs text-gray-500 uppercase tracking-wide">{label}</p>
-            <p className={`text-3xl font-bold mt-1 ${color}`}>{value}</p>
+            <p className={`text-3xl font-bold mt-1 ${color}`}>
+              {isNum ? <AnimatedNumber value={value} /> : <><AnimatedNumber value={value} />%</>}
+            </p>
           </div>
         ))}
+      </div>
+
+      {/* Streak + goal row */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-6">
+        {/* Streak */}
+        <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm flex items-center gap-4">
+          <div className="text-4xl">{streak >= 7 ? '🔥' : streak >= 3 ? '⚡' : '🌱'}</div>
+          <div>
+            <p className="text-xs text-gray-500 uppercase tracking-wide">Application Streak</p>
+            <p className="text-2xl font-bold text-gray-900 mt-0.5">
+              {streak} <span className="text-sm font-normal text-gray-500">{streak === 1 ? 'day' : 'days'}</span>
+            </p>
+            <p className="text-xs text-gray-400 mt-0.5">
+              {streak === 0 ? 'Apply today to start a streak!' : streak >= 7 ? 'On fire! Keep it up!' : 'Keep the momentum going!'}
+            </p>
+          </div>
+        </div>
+
+        {/* Weekly goal ring */}
+        {editingGoal ? (
+          <div className="bg-white rounded-xl border border-gray-200 p-4 shadow-sm flex items-center gap-3">
+            <input
+              type="number"
+              min="1"
+              max="50"
+              value={goalInput}
+              onChange={(e) => setGoalInput(e.target.value)}
+              placeholder="e.g. 5"
+              className="flex-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              autoFocus
+            />
+            <button
+              onClick={() => {
+                const g = Math.max(1, Number(goalInput) || weeklyGoal)
+                setWeeklyGoal(g)
+                localStorage.setItem('weekly_goal', g)
+                setEditingGoal(false)
+              }}
+              className="bg-blue-600 text-white px-3 py-2 rounded-lg text-sm"
+            >Save</button>
+            <button onClick={() => setEditingGoal(false)} className="text-gray-400 hover:text-gray-600">✕</button>
+          </div>
+        ) : (
+          <GoalRing
+            applied={thisWeekApplied}
+            goal={weeklyGoal}
+            onEdit={() => { setGoalInput(String(weeklyGoal)); setEditingGoal(true) }}
+          />
+        )}
       </div>
 
       {/* Upcoming interviews */}
@@ -290,6 +483,12 @@ export default function Dashboard() {
             </h2>
             <div className="flex flex-wrap items-center gap-2">
               <ResumeAnalyzer />
+              <button
+                onClick={() => setShowImport(true)}
+                className="border border-gray-300 text-gray-600 hover:bg-gray-50 text-sm font-medium px-3 py-2 rounded-lg transition-colors"
+              >
+                Import CSV
+              </button>
               <button
                 onClick={exportCSV}
                 className="border border-gray-300 text-gray-600 hover:bg-gray-50 text-sm font-medium px-3 py-2 rounded-lg transition-colors"
@@ -457,6 +656,18 @@ export default function Dashboard() {
         </div>
       )}
 
+      {/* Import CSV modal */}
+      {showImport && (
+        <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
+          <div className="w-full max-w-lg">
+            <div className="flex justify-end mb-2">
+              <button onClick={() => setShowImport(false)} className="text-white text-xl hover:opacity-75">✕</button>
+            </div>
+            <CsvImport onImported={() => { fetchJobs(); setShowImport(false) }} />
+          </div>
+        </div>
+      )}
+
       {/* Add Resume modal */}
       {showAddResume && (
         <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-50 p-4">
@@ -488,6 +699,19 @@ export default function Dashboard() {
                   placeholder="e.g. React frontend engineer, Python backend, teacher"
                 />
                 <p className="text-xs text-gray-400 mt-1">Leave blank to use the board name as search term.</p>
+              </div>
+              <div>
+                <label className="text-xs font-medium text-gray-600">
+                  Your Resume PDF
+                  <span className="text-gray-400 font-normal ml-1">(used for analyzing job matches)</span>
+                </label>
+                <input
+                  type="file"
+                  accept=".pdf"
+                  onChange={(e) => setResumePdf(e.target.files[0] || null)}
+                  className="w-full mt-1 border border-gray-300 rounded-lg px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+                {resumePdf && <p className="text-xs text-green-600 mt-1">✓ {resumePdf.name}</p>}
               </div>
               <div className="flex gap-3 pt-1">
                 <button type="button" onClick={() => setShowAddResume(false)}

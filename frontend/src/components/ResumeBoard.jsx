@@ -2,6 +2,7 @@ import { useState } from 'react'
 import api from '../api/axios'
 import KanbanBoard from './KanbanBoard'
 import JobSuggestions from './JobSuggestions'
+import BoardAnalyzer from './BoardAnalyzer'
 
 const STATUSES = ['applied', 'interviewing', 'offer', 'rejected']
 
@@ -13,6 +14,9 @@ export default function ResumeBoard({ resume, jobs, allJobs, onJobUpdated, onJob
   })
   const [submitting, setSubmitting] = useState(false)
   const [confirmDelete, setConfirmDelete] = useState(false)
+  const [editing, setEditing] = useState(false)
+  const [editForm, setEditForm] = useState({ name: resume.name, keywords: resume.keywords || '' })
+  const [saving, setSaving] = useState(false)
 
   async function handleAddJob(e) {
     e.preventDefault()
@@ -37,6 +41,22 @@ export default function ResumeBoard({ resume, jobs, allJobs, onJobUpdated, onJob
     }
   }
 
+  async function handleSaveEdit() {
+    if (!editForm.name.trim()) return
+    setSaving(true)
+    try {
+      await api.patch(`/resumes/${resume.id}`, editForm)
+      resume.name     = editForm.name
+      resume.keywords = editForm.keywords || null
+      setEditing(false)
+      window.location.reload()
+    } catch (err) {
+      console.error('Failed to update resume board', err)
+    } finally {
+      setSaving(false)
+    }
+  }
+
   async function handleDeleteResume() {
     try {
       await api.delete(`/resumes/${resume.id}`)
@@ -52,8 +72,10 @@ export default function ResumeBoard({ resume, jobs, allJobs, onJobUpdated, onJob
   return (
     <div>
       {/* Today's openings — only shown when explicit keywords are set */}
+      <BoardAnalyzer resumeId={resume.id} />
+
       {keywords ? (
-        <JobSuggestions keywords={keywords} />
+        <JobSuggestions keywords={keywords} resumeId={resume.id} />
       ) : (
         <div className="bg-amber-50 border border-amber-200 rounded-xl px-5 py-4 mb-6 text-sm text-amber-700">
           Add <strong>job search keywords</strong> to this board to see matching openings.
@@ -64,12 +86,49 @@ export default function ResumeBoard({ resume, jobs, allJobs, onJobUpdated, onJob
       {/* Board header */}
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h2 className="text-xl font-bold text-gray-900">{resume.name}</h2>
-          {resume.keywords && (
-            <p className="text-xs text-gray-400 mt-0.5">Keywords: {resume.keywords}</p>
+          {editing ? (
+            <div className="flex flex-col gap-2">
+              <input
+                value={editForm.name}
+                onChange={(e) => setEditForm({ ...editForm, name: e.target.value })}
+                placeholder="Board name"
+                className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm font-bold focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <input
+                value={editForm.keywords}
+                onChange={(e) => setEditForm({ ...editForm, keywords: e.target.value })}
+                placeholder="Keywords (e.g. frontend engineer)"
+                className="border border-gray-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+              <div className="flex gap-2">
+                <button onClick={handleSaveEdit} disabled={saving}
+                  className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50">
+                  {saving ? 'Saving…' : 'Save'}
+                </button>
+                <button onClick={() => setEditing(false)}
+                  className="text-xs px-3 py-1.5 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50">
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div>
+              <h2 className="text-xl font-bold text-gray-900">{resume.name}</h2>
+              {resume.keywords && (
+                <p className="text-xs text-gray-400 mt-0.5">Keywords: {resume.keywords}</p>
+              )}
+            </div>
           )}
         </div>
         <div className="flex items-center gap-2">
+          {!editing && !confirmDelete && (
+            <button
+              onClick={() => { setEditForm({ name: resume.name, keywords: resume.keywords || '' }); setEditing(true) }}
+              className="text-xs px-3 py-1.5 border border-gray-300 text-gray-600 rounded-lg hover:bg-gray-50"
+            >
+              Edit board
+            </button>
+          )}
           {confirmDelete ? (
             <>
               <span className="text-xs text-gray-500">Delete this resume board?</span>

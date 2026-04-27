@@ -1,6 +1,9 @@
 # Job Tracker Startup Script
 $ErrorActionPreference = "SilentlyContinue"
 
+# ── Set to $true if you want to share via Cloudflare tunnel ──
+$SHARE_WITH_CLOUDFLARE = $false
+
 # Add Docker to PATH
 $env:Path += ";C:\Program Files\Docker\Docker\resources\bin"
 
@@ -19,6 +22,33 @@ if (-not $docker) {
 Write-Host "Starting Job Tracker services..." -ForegroundColor Cyan
 Set-Location "C:\Users\mahat\job-tracker"
 docker compose up -d
+
+# Auto-backup database
+Write-Host "Backing up database..." -ForegroundColor Cyan
+$backupDir = "C:\Users\mahat\job-tracker\backups"
+if (-not (Test-Path $backupDir)) { New-Item -ItemType Directory -Path $backupDir | Out-Null }
+$backupFile = "$backupDir\backup-$(Get-Date -Format 'yyyy-MM-dd').sql"
+Start-Sleep -Seconds 5  # Wait for postgres to be ready
+docker compose exec -T postgres pg_dump -U admin jobtracker | Out-File -FilePath $backupFile -Encoding utf8
+if (Test-Path $backupFile) {
+    Write-Host "  ✓ Database backed up to backups\backup-$(Get-Date -Format 'yyyy-MM-dd').sql" -ForegroundColor Green
+} else {
+    Write-Host "  ! Backup skipped (postgres not ready yet)" -ForegroundColor Yellow
+}
+
+# Keep only last 7 backups
+Get-ChildItem "$backupDir\backup-*.sql" | Sort-Object Name -Descending | Select-Object -Skip 7 | Remove-Item -Force
+
+Write-Host ""
+Write-Host "============================================" -ForegroundColor Green
+Write-Host "  App is running at http://localhost:3000" -ForegroundColor Green
+Write-Host "============================================" -ForegroundColor Green
+
+if (-not $SHARE_WITH_CLOUDFLARE) {
+    Write-Host "Press any key to close this window." -ForegroundColor Cyan
+    $null = $Host.UI.RawUI.ReadKey("NoEcho,IncludeKeyDown")
+    exit
+}
 
 Write-Host ""
 Write-Host "Starting Cloudflare tunnel..." -ForegroundColor Cyan

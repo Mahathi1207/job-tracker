@@ -35,8 +35,7 @@ SMTP_HOST     = os.getenv("SMTP_HOST", "smtp.gmail.com")
 SMTP_PORT     = int(os.getenv("SMTP_PORT", "587"))
 SMTP_USER     = os.getenv("SMTP_USER", "")
 SMTP_PASSWORD = os.getenv("SMTP_PASSWORD", "")
-ADZUNA_APP_ID      = os.getenv("ADZUNA_APP_ID", "")
-ADZUNA_APP_KEY     = os.getenv("ADZUNA_APP_KEY", "")
+AI_SERVICE_URL = os.getenv("AI_SERVICE_URL", "http://ai-service:8003")
 APP_URL            = os.getenv("APP_URL", "http://localhost:3000")
 SCHEDULER_TIMEZONE = os.getenv("SCHEDULER_TIMEZONE", "America/Chicago")
 
@@ -252,12 +251,9 @@ async def send_followup_reminders():
         print(f"[Scheduler] Follow-up → {row.email} for {row.company} — {'ok' if success else 'failed'}")
 
 
-# ── Daily job suggestions ─────────────────────────────────────
+# ── Daily job suggestions (Fortune 500 ATS) ───────────────────
 async def send_job_suggestions():
-    print("[Scheduler] Running job suggestions…")
-    if not ADZUNA_APP_ID or not ADZUNA_APP_KEY:
-        print("[Scheduler] Adzuna not configured — skipping job suggestions")
-        return
+    print("[Scheduler] Running job suggestions via Fortune 500 ATS…")
 
     try:
         with engine.connect() as conn:
@@ -272,25 +268,19 @@ async def send_job_suggestions():
         print(f"[Scheduler] DB error fetching users: {e}")
         return
 
-    async with httpx.AsyncClient(timeout=15) as client:
+    async with httpx.AsyncClient(timeout=30) as client:
         for user in users:
             raw_keywords = user.keywords or ""
             search_term = raw_keywords.split(",")[0].strip() if raw_keywords else "software engineer"
 
             try:
                 resp = await client.get(
-                    "https://api.adzuna.com/v1/api/jobs/us/search/1",
-                    params={
-                        "app_id": ADZUNA_APP_ID,
-                        "app_key": ADZUNA_APP_KEY,
-                        "what": search_term,
-                        "results_per_page": 5,
-                        "sort_by": "date",
-                    },
+                    f"{AI_SERVICE_URL}/ai/job-suggestions",
+                    params={"keywords": search_term},
                 )
-                job_results = resp.json().get("results", [])
+                job_results = resp.json().get("jobs", [])
             except Exception as e:
-                print(f"[Scheduler] Adzuna error for {user.email}: {e}")
+                print(f"[Scheduler] Job suggestions error for {user.email}: {e}")
                 continue
 
             if not job_results:
@@ -299,27 +289,27 @@ async def send_job_suggestions():
             items_html = "".join(
                 f"""<div style="border:1px solid #e5e7eb;border-radius:8px;padding:12px;margin:8px 0;">
                   <strong style="color:#1f2937;">{j.get('title','Unknown Role')}</strong><br>
-                  <span style="color:#6b7280;">{j.get('company',{}).get('display_name','Unknown')}
-                  · {j.get('location',{}).get('display_name','')}</span><br>
+                  <span style="color:#6b7280;">{j.get('company','Unknown')}
+                  · {j.get('location','')}</span><br>
                   <a href="{j.get('redirect_url','#')}"
-                     style="color:#2563eb;font-size:14px;text-decoration:none;">View Job →</a>
+                     style="color:#7c3aed;font-size:14px;text-decoration:none;">View Job →</a>
                 </div>"""
-                for j in job_results
+                for j in job_results[:5]
             )
 
             name = user.full_name or "there"
-            subject = f"Today's top {search_term} jobs for you"
+            subject = f"Today's Fortune 500 openings for you — {search_term}"
             body = f"""\
 <div style="font-family:sans-serif;max-width:560px;margin:auto;">
   <h2>Hi {name}!</h2>
-  <p>Here are today's fresh openings matching <strong>{search_term}</strong>:</p>
+  <p>Here are today's openings from top companies matching <strong>{search_term}</strong>:</p>
   {items_html}
   <a href="{APP_URL}" style="display:inline-block;margin-top:16px;padding:10px 20px;
-     background:#2563eb;color:#fff;border-radius:8px;text-decoration:none;">
+     background:#7c3aed;color:#fff;border-radius:8px;text-decoration:none;">
     Open Job Tracker
   </a>
   <p style="color:#9ca3af;font-size:12px;margin-top:24px;">
-    You're receiving this because you have an account on Job Tracker.
+    Jobs sourced directly from company career pages.
   </p>
 </div>"""
 
